@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#1d2024">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CLACK">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>CLACK</title>
+<style>
+html,body{height:100%}
+:root{color-scheme:dark}
+body{margin:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));background:#1d2024;color:#eee;font-family:system-ui,sans-serif;touch-action:none;user-select:none;-webkit-user-select:none}
+#hud{display:flex;gap:10px;justify-content:space-between;align-items:center;padding:6px 8px;font-size:13px;max-width:440px;margin:0 auto}
+canvas{display:block;margin:0 auto;touch-action:none}
+#log{font-size:11px;color:#9aa;padding:4px 8px;max-width:440px;margin:0 auto;min-height:2.6em}
+#panel{display:none;max-width:440px;margin:6px auto;padding:8px;background:#333a;border:1px solid #666;border-radius:6px;font-size:14px;text-align:center}
+button{font-size:15px;padding:6px 10px;margin:3px;border-radius:5px;border:1px solid #888;background:#444;color:#eee}
+button:disabled{opacity:.35}
+#dev{max-width:440px;margin:6px auto;font-size:12px;color:#9aa}#dev summary{cursor:pointer;padding:4px 8px}
+.opt{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;max-width:440px;margin:4px auto;font-size:12px}.opt button{font-size:12px;padding:3px 8px;margin:0}.opt button.on{background:#7a7f3a;border-color:#fff}
+</style>
+</head>
+<body>
+<div id="hud"><span>Score <b id="score">0</b></span><span>Best <b id="best">0</b></span><button id="undo">Undo</button></div>
+<canvas id="c"></canvas>
+<div id="panel">
+  <div><b style="font-size:20px">JAMMED</b> <span id="pinfo"></span></div>
+  <div style="font-size:13px">💥 Paint bomb: tap any cube to preview it (free)</div>
+  <div id="tinfo" style="font-size:12px;color:#ccc"></div>
+  <button id="apply" disabled>💥 Use paint bomb</button><button id="restart">Restart</button>
+</div>
+<details id="dev"><summary>Settings for testing</summary><div id="rule" style="font-size:11px;color:#9aa;margin:4px 0"></div><div class="opt" id="knobs"></div></details>
+<div id="log">Drag a piece onto the plate: cubes of its colour in its rows and columns fly in. Catch 3 = blast. Cubes touching a blast become magnets: if they can catch 3 of their colour, they blast too (CHAIN). The preview shows it.</div>
+<script>
+// ---- tuning ----
+const N=8, COLS=['#e0553f','#3f8fe0','#4cbb5e','#e8c440','#b05be0','#f08a24'];
+let START_CUBES=0; const AFTERSHOCK_MIN=4; // START_CUBES: coloured cubes on the plate at the start (0 = empty, like Block Blast)
+let CHAIN_RULE='touch', MAX_CHAIN=5; // 'touch' = cubes touching a blast become magnets · 'classic' = the colour with most cubes around the hole wakes
+// knobs (see the buttons under the board)
+let NC=5, BURST_MIN=3, RANGE=99; // colours · catches needed to burst · how far a magnet reaches (99 = whole row/column)
+let INFLOW=0, RAMP_EVERY=0;      // optional: cubes that fall onto the plate before each new tray · +1 more every N trays (off by default: every cube comes from your own pieces)
+// levels: the rules get harder at set placements, announced on screen (instead of cubes falling in)
+let LEVELS_ON=false, LEVELS=[{at:0,nc:5,catch:3},{at:40,catch:4,msg:'Magnets now need 4'},{at:80,nc:6,msg:'A sixth colour'}], level=-1, banner='', bannerT0=0;
+function applyLevel(){
+  if(!LEVELS_ON)return false;let i=0;LEVELS.forEach((L,j)=>{if(placements>=L.at)i=j});if(i===level)return false;
+  level=i;for(let j=0;j<=i;j++){const L=LEVELS[j];if(L.nc)NC=L.nc;if(L.catch)BURST_MIN=L.catch}
+  if(i>0){banner=`LEVEL ${i+1}: ${LEVELS[i].msg}`;bannerT0=performance.now()}return true;
+}
+// lab: the plate itself changes between trays. 'pulse' = the plate pulses GATHER (same colours slide together into lines) or SCATTER (touching same colours step apart)
+// 'rust' = rust creeps in from the edges onto empty cells in a fixed, previewed order; blasts polish away rust they touch
+let BOARD_FX='rust', RUST_RATE=1, RUST_MAX=36, plannedPulse=null, plannedRust=[], lastFx={moves:[],rust:[]};
+const RUST=-2;
+let DIRECTOR='auto', TARGET=120;  // 'off' raw random trays · 'help' best trays, cubes land where they hurt least · 'kill' bad trays, cubes land where they hurt · 'auto' runs the rhythm until TARGET placements, then kills
+// auto rhythm: calm → charge (falling cubes take the colour that lines up with their row and column: the plate gets tight but loaded)
+// → rescue (once TIGHT cubes are down, the tray holds a piece that can clear most of the plate) → calm for RESCUE_COOLDOWN trays
+let RHYTHM=true, CALM_START=12, TIGHT=34, RESCUE_COOLDOWN=3, KILL_PICK=6, KILL_STYLE='none', killStart=-1;
+// drift (the default kill): no switch at all. From DRIFT_START placements the rhythm keeps running, but rescue pieces get weaker and more pieces
+// come in colours that can't catch, reaching full strength DRIFT_LEN placements later
+let DRIFT_START=40, DRIFT_LEN=60;
+const driftK=()=>DIRECTOR==='auto'&&KILL_STYLE==='drift'?Math.max(0,(placements-DRIFT_START)/DRIFT_LEN):0; // CALM_START: the opening placements are left alone // kill deals the 3 least useful of KILL_PICK random pieces: 6 = subtle, 24 = brutal
+let cooldown=0,lastRescue=0;
+// PIECESET 'blast' adds Block Blast's single cube and 3×3 square to CLACK's 2–6 cell pieces
+let PIECESET='blast';
+const SHAPES=[
+ [[0,0],[0,1]],[[0,0],[1,0]],
+ [[0,0],[0,1],[0,2]],[[0,0],[1,0],[2,0]],[[0,0],[0,1],[1,0]],[[0,0],[0,1],[1,1]],[[0,0],[1,0],[1,1]],[[0,1],[1,0],[1,1]],
+ [[0,0],[0,1],[1,0],[1,1]],[[0,0],[0,1],[0,2],[0,3]],[[0,0],[1,0],[2,0],[3,0]],[[0,0],[1,0],[2,0],[2,1]],[[0,0],[0,1],[0,2],[1,1]],[[0,1],[1,0],[1,1],[1,2]],
+ [[0,1],[1,0],[1,1],[1,2],[2,1]],[[0,0],[0,1],[0,2],[0,3],[0,4]],[[0,0],[1,0],[2,0],[2,1],[2,2]],
+ [[0,0],[0,1],[0,2],[1,0],[1,1],[1,2]],[[0,0],[0,1],[1,0],[1,1],[2,0],[2,1]]
+];
+const SHAPES_BLAST=[...SHAPES,[[0,0]],[[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]]];
+const curShapes=()=>PIECESET==='blast'?SHAPES_BLAST:SHAPES;
+const DIRS=[[0,1],[0,-1],[1,0],[-1,0]];
+const $=id=>document.getElementById(id);
+const cv=$('c'),ctx=cv.getContext('2d');
+const LS={get(k,d){try{const v=localStorage.getItem('clack_'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('clack_'+k,JSON.stringify(v))}catch(e){}}};
+const empty=()=>Array.from({length:N},()=>Array(N).fill(-1));
+const copy=g=>g.map(r=>r.slice());
+const inb=(r,c)=>r>=0&&c>=0&&r<N&&c<N;
+const rnd=n=>Math.floor(Math.random()*n);
+const fillPct=g=>g.flat().filter(v=>v>=0).length/(N*N);
+
+let cs,W,H,trayY,trays=0;
+// juice: cubes launch one after another, each gap and each flight a bit faster than the last; every impact shakes the plate
+const GAP0=200, GAP_SPEEDUP=0.75, GAP_MIN=30, FLY_PER_CELL=26, FLY_BASE=70, FLY_SPEEDUP=0.9;
+let flying=[],pops=[],sparks=[],shakeAmp=0,combo=0,chainT0=0,wake=null;
+const inflowNext=()=>INFLOW+(RAMP_EVERY?Math.floor((trays+1)/RAMP_EVERY):0);
+let board,tray,score=0,placements=0,runStart=0,undoSnap,undoUsed,contUsed,busy=false,skip=false,drag=null,jam=false,paintAt=null,paintPrev=null,rule='',flash=null,chainText='',started=false;
+const sleep=ms=>new Promise(r=>setTimeout(r,skip?0:ms));
+
+// ---- sound ----
+let AC;
+function tone(f,dur,type,vol){try{AC=AC||new AudioContext();const o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.value=f;g.gain.setValueAtTime(vol,AC.currentTime);g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+dur);o.connect(g).connect(AC.destination);o.start();o.stop(AC.currentTime+dur+.01)}catch(e){}}
+const clack=i=>tone(260*Math.pow(1.0595,Math.min(i,24)*2),.07,'square',.06); // up a whole tone per catch
+const boom=ch=>tone(110*ch,.3,'sawtooth',.1);
+
+// ---- core rules ----
+function canPut(g,p,r,c){return p.cells.every(([a,b])=>inb(a+r,b+c)&&g[a+r][b+c]===-1)}
+function fits(p,g=board){for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(canPut(g,p,r,c))return true;return false}
+// mags: magnet cells (already painted `color` in g). Pulls same-colour cubes in line of sight. Mutates g.
+function pull(g,mags,color,magSet){
+  const list=[],claimed=new Set();
+  for(const [r,c] of mags)for(const [dr,dc] of DIRS){
+    let rr=r+dr,cc=c+dc,d=1;
+    while(inb(rr,cc)&&d<=RANGE){
+      const k=rr*N+cc;
+      if(magSet.has(k))break;
+      const v=g[rr][cc];
+      if(v===RUST)break;
+      if(v>=0){if(v!==color)break;if(!claimed.has(k)){claimed.add(k);list.push({r:rr,c:cc,dr:-dr,dc:-dc,dist:Math.abs(rr-r)+Math.abs(cc-c)})}}
+      rr+=dr;cc+=dc;d++;
+    }
+  }
+  list.sort((a,b)=>a.dist-b.dist);
+  const clump=new Set(magSet),moves=[];
+  for(const m of list){
+    g[m.r][m.c]=-1;let r=m.r,c=m.c;
+    while(inb(r+m.dr,c+m.dc)&&g[r+m.dr][c+m.dc]===-1){r+=m.dr;c+=m.dc}
+    g[r][c]=color;clump.add(r*N+c);
+    moves.push({fr:m.r,fc:m.c,tr:r,tc:c});
+  }
+  return {moves,caught:list.length,clump};
+}
+function place(b,p,ar,ac){
+  if(!canPut(b,p,ar,ac))return null;
+  const pc=p.cells.map(([r,c])=>[r+ar,c+ac]);
+  const g=copy(b);for(const [r,c] of pc)g[r][c]=p.color;
+  const magSet=new Set(pc.map(([r,c])=>r*N+c));
+  return {g,pc,...pull(g,pc,p.color,magSet)};
+}
+function flood(g,set,color){
+  const seen=new Set(set),st=[...set];
+  while(st.length){const k=st.pop(),r=k/N|0,c=k%N;
+    for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(inb(nr,nc)&&!seen.has(nk)&&g[nr][nc]===color){seen.add(nk);st.push(nk)}}}
+  return seen;
+}
+
+// ---- director ----
+// the director only changes what is not shown yet: the next tray and where the announced cubes land
+const filledN=g=>g.flat().filter(v=>v>=0).length, usedN=g=>g.flat().filter(v=>v!==-1).length, rustCount=()=>board.flat().filter(v=>v===RUST).length, mobility=g=>curShapes().reduce((s,sh)=>s+(fits({cells:sh},g)?1:0),0);
+// ---- chain reactions: one synchronous resolver; the drag preview reads it and the animation replays its steps ----
+// steps: {type:'pull',moves,color} · {type:'wake',set} (cubes that turn into magnets) · {type:'burst',set,level}
+function runChain(g,crater,steps){
+  let gain=0,level=1;
+  for(;;){
+    steps.push({type:'burst',set:crater,level});for(const k of crater)g[k/N|0][k%N]=-1;gain+=crater.size*10*level;
+    const pol=new Set();for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&g[nr][nc]===RUST){g[nr][nc]=-1;pol.add(nr*N+nc)}}}
+    if(pol.size){steps.push({type:'polish',set:pol});gain+=pol.size*5}
+    if(level>=MAX_CHAIN)break;
+    const next=CHAIN_RULE==='touch'?touchWave(g,crater,steps):classicWave(g,crater,steps);
+    if(!next)break;level++;crater=next;
+  }
+  return {gain,level};
+}
+// touch: every cube touching the blast becomes a magnet; a same-colour group that can catch BURST_MIN of its colour pulls them in and blasts (no catch = nothing moves)
+function touchWave(g,crater,steps){
+  const border=new Set();
+  for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&g[nr][nc]>=0)border.add(nr*N+nc)}}
+  const seen=new Set(),next=new Set();
+  for(const k0 of border){
+    const color=g[k0/N|0][k0%N];if(seen.has(k0)||color<0)continue;
+    const grp=new Set([k0]),st=[k0];seen.add(k0);
+    while(st.length){const k=st.pop(),r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(inb(nr,nc)&&border.has(nk)&&!seen.has(nk)&&g[nr][nc]===color){seen.add(nk);grp.add(nk);st.push(nk)}}}
+    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp);
+    if(res.caught<BURST_MIN)continue;
+    for(let r=0;r<N;r++)g[r]=t[r];
+    steps.push({type:'wake',set:grp},{type:'pull',moves:res.moves,color});
+    for(const k of flood(g,res.clump,color))next.add(k);
+  }
+  return next.size?next:null;
+}
+// classic: the colour with the most cubes around the hole wakes and pulls; a moved cube and a clump of AFTERSHOCK_MIN+ blasts
+function classicWave(g,crater,steps){
+  const by={};for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&g[nr][nc]>=0){const v=g[nr][nc];(by[v]=by[v]||new Set()).add(nr*N+nc)}}}
+  let best=-1,bs=0;for(const v in by)if(by[v].size>bs){bs=by[v].size;best=+v}if(best<0)return null;
+  const res=pull(g,[...by[best]].map(k=>[k/N|0,k%N]),best,by[best]),cl=flood(g,res.clump,best);
+  steps.push({type:'wake',set:by[best]},{type:'pull',moves:res.moves,color:best});
+  return res.moves.some(m=>m.fr!==m.tr||m.fc!==m.tc)&&cl.size>=AFTERSHOCK_MIN?cl:null;
+}
+// a whole placement: the magnet pull, then the blast and its chain
+function simulate(b,p,ar,ac){
+  const res=place(b,p,ar,ac);if(!res)return null;
+  const steps=[{type:'pull',moves:res.moves,color:p.color}];let gain=0,level=0;
+  if(res.caught>=BURST_MIN)({gain,level}=runChain(res.g,flood(res.g,res.clump,p.color),steps));
+  return {g:res.g,pc:res.pc,moves:res.moves,caught:res.caught,steps,gain,level};
+}
+const resolveSync=simulate;
+const moveValue=x=>x.gain/10-filledN(x.g)+0.5*mobility(x.g);
+// how good this piece is for a player who places it well (-1e9 = does not fit)
+function bestFor(g,p){let bv=-1e9;for(let r=0;r<N;r++)for(let c=0;c<N;c++){const x=resolveSync(g,p,r,c);if(x){const v=moveValue(x);if(v>bv)bv=v}}return bv}
+function directorRule(){
+  if(DIRECTOR!=='auto')return DIRECTOR;
+  if(KILL_STYLE!=='drift'&&KILL_STYLE!=='none'&&placements>=TARGET)return 'kill';
+  if(!RHYTHM)return filledN(board)>40||mobility(board)<12?'help':'off';
+  if(cooldown>0||placements<CALM_START)return 'calm';
+  return usedN(board)>=TIGHT||mobility(board)<12?'rescue':'charge';
+}
+// ---- the plate between trays ----
+const RING_ORDER=(()=>{const a=[];for(let r=0;r<N;r++)for(let c=0;c<N;c++)a.push({r,c,ring:Math.min(r,c,N-1-r,N-1-c),ang:Math.atan2(r-(N-1)/2,c-(N-1)/2)});
+  return a.sort((x,y)=>x.ring-y.ring||x.ang-y.ang).map(x=>[x.r,x.c])})(); // rust creeps ring by ring, clockwise
+function pulseSim(b,type){
+  const g=copy(b),moves=[],list=[];
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){const col=g[r][c];if(col<0)continue;
+    if(type==='gather'){ // slide toward the nearest cube of its colour in line, through empty cells only
+      let best=null;for(const [dr,dc] of DIRS){let rr=r+dr,cc=c+dc,d=1;while(inb(rr,cc)&&g[rr][cc]===-1){rr+=dr;cc+=dc;d++}
+        if(d>=2&&inb(rr,cc)&&g[rr][cc]===col&&(!best||d<best.d))best={dr,dc,d}}
+      if(best)list.push({r,c,dr:best.dr,dc:best.dc,d:best.d});
+    }else{ // scatter: a cube touching its own colour steps one cell away from it
+      for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,tr=r-dr,tc=c-dc;if(inb(nr,nc)&&g[nr][nc]===col&&inb(tr,tc)&&g[tr][tc]===-1){list.push({r,c,dr:-dr,dc:-dc,d:1});break}}
+    }}
+  list.sort((a,b)=>a.d-b.d);
+  for(const m of list){const col=g[m.r][m.c];if(col<0)continue;let r=m.r,c=m.c;
+    if(type==='gather'){while(inb(r+m.dr,c+m.dc)&&g[r+m.dr][c+m.dc]===-1){r+=m.dr;c+=m.dc}if(!inb(r+m.dr,c+m.dc)||g[r+m.dr][c+m.dc]!==col||(r===m.r&&c===m.c))continue}
+    else{r+=m.dr;c+=m.dc;if(!inb(r,c)||g[r][c]!==-1)continue}
+    g[m.r][m.c]=-1;g[r][c]=col;moves.push({fr:m.r,fc:m.c,tr:r,tc:c,color:col});
+  }
+  return {g,moves};
+}
+function choosePulse(){
+  if(DIRECTOR==='off')return ['gather','scatter','calm'][rnd(3)];
+  const r=directorRule();
+  if(r==='kill')return 'scatter';
+  if(r==='charge')return usedN(board)>=TIGHT-6?'gather':'scatter'; // close to tight: line the plate up for the save
+  return r==='rescue'||r==='help'?'gather':'calm';
+}
+function rustAmount(){const r=directorRule();return DIRECTOR==='off'?RUST_RATE:r==='charge'||r==='kill'?2:0}
+function rustPlan(k){const out=[];if(k<=0)return out;let have=board.flat().filter(v=>v===RUST).length;
+  for(const [r,c] of RING_ORDER){if(out.length>=k||have+out.length>=RUST_MAX)break;if(board[r][c]===-1)out.push([r,c])}return out}
+function planBoard(){plannedPulse=BOARD_FX==='pulse'?choosePulse():null;plannedRust=BOARD_FX==='rust'?rustPlan(rustAmount()):[]}
+function boardFx(){
+  const out={moves:[],rust:[],pulse:plannedPulse};
+  if(BOARD_FX==='pulse'&&plannedPulse&&plannedPulse!=='calm'){const ps=pulseSim(board,plannedPulse);board=ps.g;out.moves=ps.moves}
+  if(BOARD_FX==='rust')for(const [r,c] of plannedRust)if(board[r][c]===-1){board[r][c]=RUST;out.rust.push([r,c])}
+  return out;
+}
+// the colour this shape would catch the least with here
+function dudColour(p){let best=p.color,bc=1e9;for(let k=0;k<NC;k++){const c=bestCatch(board,{cells:p.cells,color:k});if(c<bc){bc=c;best=k}}return best}
+// most cubes this piece can catch in one placement, -1 if it does not fit
+function bestCatch(g,p){let best=-1;for(let r=0;r<N;r++)for(let c=0;c<N;c++){const x=place(g,p,r,c);if(x)best=Math.max(best,x.caught)}return best}
+// most cubes one placement of this piece can clear (blast + chain), -1 if it does not fit
+function bestClear(g,p){const f=filledN(g)+p.cells.length;let best=-1;for(let r=0;r<N;r++)for(let c=0;c<N;c++){const x=simulate(g,p,r,c);if(x)best=Math.max(best,f-filledN(x.g))}return best}
+function randPiece(big=false){const S=curShapes();let s;do{s=S[rnd(S.length)]}while(big?s.length<4&&Math.random()<0.5:s.length>4&&Math.random()<0.6);return {cells:s,color:rnd(NC)}}
+function dealTray(){
+  const tr=dealTray0(),k=driftK();
+  if(k>0)for(const p of tr)if(!p.hero&&Math.random()<Math.min(.85,.75*k))p.color=dudColour(p);
+  return tr;
+}
+function dealTray0(){
+  rule=directorRule();
+  if(rule==='rescue'){
+    // the save: one piece that clears as much as possible, plus two small pieces that fit
+    // the hero piece: the best of 80 candidates, or under drift a weaker one (down the ranking as the drift grows)
+    const cands=Array.from({length:80},()=>{const p=randPiece();return {p,v:bestClear(board,p)}}).filter(x=>x.v>=0).sort((a,b)=>b.v-a.v);
+    const pick=cands[Math.min(cands.length-1,Math.floor(Math.min(1,driftK())*(cands.length-1)))],hero=pick?pick.p:null,hv=pick?pick.v:-1;if(hero)hero.hero=true;
+    if(hero){cooldown=RESCUE_COOLDOWN;lastRescue=hv;const easy=()=>{for(let t=0;t<60;t++){const p=randPiece();if(p.cells.length<=3&&fits(p))return p}return randPiece()};
+      const tr=[easy(),easy()];tr.splice(rnd(3),0,hero);return tr}
+  }
+  if(cooldown>0)cooldown--;
+  if(rule==='charge'){
+    // pressure from the deal only, like Block Blast: one fitting piece in a colour that can't catch much here (it cools into cubes), plus two bigger random pieces
+    const duds=Array.from({length:8},()=>randPiece(true)).filter(p=>fits(p)).map(p=>({p,c:bestCatch(board,p)})).sort((a,b)=>a.c-b.c);
+    if(duds.length){const tr=[randPiece(true),randPiece(true)];tr.splice(rnd(3),0,duds[0].p);return tr}
+  }
+  if(rule==='off'||rule==='calm'||rule==='charge'||rule==='rescue'){
+    // charge leans toward bigger pieces so the plate gets tight
+    for(let t=0;t<100;t++){const tr=[0,1,2].map(()=>randPiece(rule==='charge'));if(tr.some(p=>fits(p)))return tr}
+    return [0,1,2].map(()=>({cells:[[0,0],[0,1]],color:rnd(NC)}));
+  }
+  if(rule==='kill'&&KILL_STYLE==='soft'){
+    // soft squeeze: no more rescues, shapes stay normal and random; a share of pieces that grows each tray comes in a colour that can't catch here
+    if(killStart<0)killStart=trays;const share=Math.min(.9,.2+.1*(trays-killStart));
+    for(let t=0;t<100;t++){const tr=[0,1,2].map(()=>{const pc=randPiece();if(Math.random()<share)pc.color=dudColour(pc);return pc});if(tr.some(x=>fits(x)))return tr}
+  }
+  const cand=Array.from({length:rule==='kill'?(KILL_STYLE==='brutal'?24:Math.max(3,KILL_PICK)):24},()=>{const p=randPiece();return {p,v:bestFor(board,p)}}).sort((a,b)=>b.v-a.v);
+  if(rule==='help')return cand.slice(0,3).map(x=>x.p);
+  // kill: the three least useful of KILL_PICK random pieces, but every fresh tray still has a legal move
+  const fit=cand.filter(x=>x.v>-1e9),worst=cand.slice(-3).map(x=>x.p);
+  if(!worst.some(p=>fits(p))&&fit.length)worst[0]=fit[fit.length-1].p;
+  return worst;
+}
+
+// ---- run flow ----
+function recordRun(){
+  if(!started||placements===0)return;
+  const secs=(Date.now()-runStart)/1000;
+  LS.set('runs',LS.get('runs',0)+1);
+  LS.set('lens',[...LS.get('lens',[]),secs].slice(-5));
+  const avg=LS.get('avgRate',25);LS.set('avgRate',avg*0.7+(score/placements)*0.3);
+  LS.set('last',Date.now());
+}
+function newRun(){
+  recordRun();started=true;
+  board=empty();let k=0;while(k<START_CUBES){const r=rnd(N),c=rnd(N);if(board[r][c]<0){board[r][c]=rnd(NC);k++}}
+  score=0;placements=0;trays=0;cooldown=0;killStart=-1;level=-1;applyLevel();banner='';runStart=Date.now();undoSnap=null;undoUsed=false;contUsed=false;jam=false;paintAt=paintPrev=null;
+  tray=dealTray();planBoard();$('panel').style.display='none';hud();draw();
+}
+async function commit(slot,ar,ac){
+  const p=tray[slot],res=simulate(board,p,ar,ac);if(!res)return;
+  busy=true;skip=false;combo=0;
+  undoSnap={board:copy(board),tray:tray.slice(),score,placements};
+  tray[slot]=null;placements++;applyLevel();
+  for(const [r,c] of res.pc)board[r][c]=p.color;
+  draw();
+  log(`Caught ${res.caught}/${BURST_MIN}`+(res.caught<BURST_MIN?' → piece cools into cubes':res.level>1?` → BURST → CHAIN x${res.level}`:' → BURST'));
+  await play(res.steps);board=res.g;
+  if(tray.every(x=>!x)){await inflow();tray=dealTray();planBoard()}
+  busy=false;skip=false;chainText='';hud();draw();checkJam();
+}
+// filings rain onto random empty cells before each new tray
+async function inflow(){
+  const before=copy(board),placed=dropCubes(),after=copy(board);board=before;
+  if(lastFx.moves.length){log(lastFx.pulse==='gather'?'Pulse: GATHER, colours slide together.':'Pulse: SCATTER, touching colours step apart.');combo=0;await animMoves(lastFx.moves)}
+  for(const [r,c] of lastFx.rust){board[r][c]=RUST;flash=new Set([r*N+c]);tone(140,.12,'sawtooth',.05);draw();await sleep(110)}
+  flash=null;board=copy(board);for(const [r,c] of placed)board[r][c]=-1;
+  for(let i=0;i<placed.length;i++){const [r,c,col]=placed[i];board[r][c]=col;flash=new Set([r*N+c]);clack(i);draw();await sleep(70)}
+  flash=null;board=after;if(placed.length)log(`${placed.length} new cubes fell onto the plate.`);
+}
+function dropCubes(){
+  lastFx=boardFx();const n=inflowNext(),placed=[];trays++;rule=directorRule();
+  for(let i=0;i<n;i++){
+    const cells=[];for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(board[r][c]===-1)cells.push([r,c]);if(!cells.length)break;
+    let [pr,pc]=cells[rnd(cells.length)],col=rnd(NC);
+    if(rule==='charge'){
+      // the colour that matches most cubes already in its row and column, so lines of one colour build up for a big catch later
+      const cnt=Array(NC).fill(0);for(let i=0;i<N;i++){if(board[pr][i]>=0)cnt[board[pr][i]]++;if(board[i][pc]>=0)cnt[board[i][pc]]++}
+      const m=Math.max(...cnt);if(m>0){const top=[...cnt.keys()].filter(k=>cnt[k]===m);col=top[rnd(top.length)]}
+    }
+    if(rule==='help'||rule==='kill'){
+      // help: the cell that costs the least room, in a neighbour's colour · kill: of a few random cells (more when brutal), the one that costs the most room
+      const pool=rule==='kill'?cells.sort(()=>Math.random()-.5).slice(0,Math.max(1,KILL_PICK>>1)):cells;
+      let bv=-1e9;for(const [r,c] of pool){board[r][c]=0;const m=mobility(board);board[r][c]=-1;const v=(rule==='kill'?-m:m)+Math.random()*.5;if(v>bv){bv=v;pr=r;pc=c}}
+      const nb=DIRS.map(([dr,dc])=>[pr+dr,pc+dc]).filter(([r,c])=>inb(r,c)&&board[r][c]>=0).map(([r,c])=>board[r][c]);
+      if(rule==='help'&&nb.length)col=nb[rnd(nb.length)];
+      if(rule==='kill'&&KILL_PICK>=12){const off=[...Array(NC).keys()].filter(k=>!nb.includes(k));if(off.length)col=off[rnd(off.length)]}
+    }
+    board[pr][pc]=col;placed.push([pr,pc,col]);
+  }
+  return placed;
+}
+async function play(steps){
+  for(const st of steps){
+    if(st.type==='pull')await animMoves(st.moves,st.color);
+    else if(st.type==='wake'){wake=st.set;tone(520,.12,'triangle',.06);await sleep(260);wake=null}
+    else if(st.type==='polish'){for(const k of st.set){board[k/N|0][k%N]=-1;sparks.push({x:(k%N+.5)*cs,y:((k/N|0)+.5)*cs,vx:0,vy:-2,col:'#ffd8a8',life:1})}tone(880,.12,'sine',.05);await sleep(160)}
+    else await burst(st.set,st.level);
+  }
+}
+async function animMoves(moves,color0){
+  const arrivals=[];
+  for(let j=0;j<moves.length;j++){
+    const m=moves[j],color=m.color??color0,i=combo++,cells=Math.abs(m.tr-m.fr)+Math.abs(m.tc-m.fc);
+    if(j)await sleep(Math.max(GAP_MIN,GAP0*Math.pow(GAP_SPEEDUP,i-1)));
+    board[m.fr][m.fc]=-1;
+    const f={color,fr:m.fr,fc:m.fc,tr:m.tr,tc:m.tc,t0:performance.now(),dur:skip||!cells?0:(FLY_BASE+FLY_PER_CELL*cells)*Math.max(.45,Math.pow(FLY_SPEEDUP,i))};
+    flying.push(f);
+    arrivals.push(sleep(f.dur).then(()=>{flying=flying.filter(x=>x!==f);board[m.tr][m.tc]=color;impact(m.tr,m.tc,i)}));
+  }
+  await Promise.all(arrivals);
+}
+// one clack: rising pitch, a pop on the cube, a shake that grows with the combo
+function impact(r,c,i){clack(i);pops.push({k:r*N+c,t0:performance.now()});shakeAmp=Math.max(shakeAmp,Math.min(8,2+i*.6))}
+function blast(set,chain){
+  for(const k of set){const r=k/N|0,c=k%N,col=COLS[board[r][c]]||'#fff';
+    for(let n=0;n<7;n++){const a=Math.random()*6.28,v=2+Math.random()*4;sparks.push({x:(c+.5)*cs,y:(r+.5)*cs,vx:Math.cos(a)*v,vy:Math.sin(a)*v-2,col,life:1})}}
+  shakeAmp=Math.min(16,6+chain*3+set.size*.3);
+}
+async function burst(set,chain){
+  flash=set;chainText=chain>1?'CHAIN x'+chain:'';chainT0=performance.now();draw();boom(chain);await sleep(220);
+  blast(set,chain);for(const k of set)board[k/N|0][k%N]=-1;
+  score+=set.size*10*chain;flash=null;hud();draw();await sleep(160);
+  return set;
+}
+function checkJam(){
+  if(tray.some(p=>p&&fits(p)))return;
+  jam=true;paintAt=paintPrev=null;
+  const best=LS.get('best',0);
+  $('pinfo').textContent=`score ${score} (${best?Math.round(score/best*100):100}% of best)`;
+  $('tinfo').textContent=contUsed?'Continue already used this run.':'Free preview first; the ad applies it (once per run).';
+  $('apply').disabled=true;$('panel').style.display='block';draw();
+}
+function hud(){
+  const best=Math.max(LS.get('best',0),score);LS.set('best',best);
+  $('score').textContent=score;$('best').textContent=best;
+  $('rule').textContent=(BOARD_FX==='pulse'&&plannedPulse?`after this tray: ${plannedPulse.toUpperCase()} · `:BOARD_FX==='rust'?`rust ${rustCount()} (+${plannedRust.length} next) · `:'')+(LEVELS_ON?`Lv ${level+1} · catch ${BURST_MIN} · ${NC} colours · `:'')+`director: ${rule} · fill ${Math.round(fillPct(board)*100)}%`+(inflowNext()?` · next tray +${inflowNext()} cubes`:'');
+  $('undo').disabled=undoUsed||!undoSnap||busy;
+}
+const log=t=>$('log').textContent=t;
+
+// ---- drawing ----
+function layout(){W=Math.min(document.body.clientWidth-32,440);cs=Math.floor(W/N);W=cs*N;trayY=W+10;H=trayY+Math.floor(W/3)+6;cv.width=W;cv.height=H;if(board)draw()}
+function cube(x,y,s,col,a=1){ctx.globalAlpha=a;ctx.fillStyle=col;ctx.fillRect(x+2,y+2,s-4,s-4);ctx.fillStyle='rgba(255,255,255,.18)';ctx.fillRect(x+2,y+2,s-4,(s-4)*.3);ctx.globalAlpha=1}
+function arrow(x1,y1,x2,y2){
+  ctx.strokeStyle='#fff';ctx.fillStyle='#fff';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  const a=Math.atan2(y2-y1,x2-x1),h=cs*.22;ctx.beginPath();ctx.moveTo(x2,y2);ctx.lineTo(x2-h*Math.cos(a-.5),y2-h*Math.sin(a-.5));ctx.lineTo(x2-h*Math.cos(a+.5),y2-h*Math.sin(a+.5));ctx.fill();
+}
+function draw(){
+  ctx.fillStyle='#1d2024';ctx.fillRect(0,0,W,H);ctx.lineJoin='round';
+  const now=performance.now();ctx.save();if(shakeAmp>.3)ctx.translate((Math.random()*2-1)*shakeAmp,(Math.random()*2-1)*shakeAmp);
+  const g=paintPrev?paintPrev.g:board;
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    ctx.fillStyle=(r+c)%2?'#596069':'#626a74';ctx.fillRect(c*cs,r*cs,cs,cs);
+    if(g[r][c]>=0)cube(c*cs,r*cs,cs,COLS[g[r][c]]);
+    else if(g[r][c]===RUST){ctx.fillStyle='#6e4326';ctx.fillRect(c*cs+1,r*cs+1,cs-2,cs-2);ctx.fillStyle='#9a5d31';for(const [a,b2] of [[.25,.3],[.65,.2],[.45,.62],[.2,.75],[.78,.7]])ctx.fillRect(c*cs+a*cs,r*cs+b2*cs,cs*.12,cs*.12)}
+  }
+  if(paintPrev){ctx.lineWidth=3;ctx.setLineDash([5,3]);ctx.strokeStyle='#fff';for(const k of paintPrev.clump)ctx.strokeRect((k%N)*cs+3,(k/N|0)*cs+3,cs-6,cs-6);ctx.setLineDash([]);
+    ctx.strokeStyle='#ffd23f';ctx.lineWidth=4;ctx.strokeRect(paintAt.c*cs+1,paintAt.r*cs+1,cs-2,cs-2)}
+  for(const p of pops){const a=(now-p.t0)/140;if(a>=1)continue;const r=p.k/N|0,c=p.k%N;if(g[r][c]<0)continue;const sc=1+.2*(1-a),d=cs*(sc-1)/2;cube(c*cs-d,r*cs-d,cs*sc,COLS[g[r][c]])}
+  for(const f of flying){const t=f.dur?Math.min(1,(now-f.t0)/f.dur):1;
+    for(const [lag,al] of [[.18,.2],[.09,.4],[0,1]]){const e=Math.max(0,t-lag)**2;cube((f.fc+(f.tc-f.fc)*e)*cs,(f.fr+(f.tr-f.fr)*e)*cs,cs,COLS[f.color],al)}}
+  if(plannedRust.length&&!busy){ctx.setLineDash([4,3]);ctx.strokeStyle='#c07a3c';ctx.lineWidth=2;for(const [r,c] of plannedRust)if(board[r][c]===-1)ctx.strokeRect(c*cs+3,r*cs+3,cs-6,cs-6);ctx.setLineDash([])}
+  if(wake){ctx.strokeStyle='#ffd23f';ctx.lineWidth=4;for(const k of wake)ctx.strokeRect((k%N)*cs+2,(k/N|0)*cs+2,cs-4,cs-4)}
+  if(flash){ctx.fillStyle='rgba(255,255,255,.7)';for(const k of flash)ctx.fillRect((k%N)*cs,(k/N|0)*cs,cs,cs)}
+  for(const p of sparks){ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.col;ctx.fillRect(p.x-3,p.y-3,6,6)}ctx.globalAlpha=1;
+  if(drag){
+    const p=tray[drag.slot],res=drag.res;
+    if(res){
+      for(const [r,c] of res.pc){cube(c*cs,r*cs,cs,COLS[p.color],.6);ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(c*cs+2,r*cs+2,cs-4,cs-4)}
+      for(const m of res.moves){
+        ctx.setLineDash([4,3]);ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(m.tc*cs+5,m.tr*cs+5,cs-10,cs-10);ctx.setLineDash([]);
+        if(m.fr!==m.tr||m.fc!==m.tc)arrow(m.fc*cs+cs/2,m.fr*cs+cs/2,m.tc*cs+cs/2,m.tr*cs+cs/2);
+        else{ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(m.fc*cs+cs/2,m.fr*cs+cs/2,cs*.12,0,7);ctx.fill()}
+      }
+      // chain preview: cells that will blast in the chain, outlined orange with their chain level
+      for(const st of res.steps)if(st.type==='burst'&&st.level>1){ctx.setLineDash([5,3]);ctx.strokeStyle='#ff9f2e';ctx.lineWidth=3;
+        for(const k of st.set)ctx.strokeRect((k%N)*cs+4,(k/N|0)*cs+4,cs-8,cs-8);ctx.setLineDash([]);
+        const k0=[...st.set][0];ctx.font=`bold ${cs*.32}px sans-serif`;ctx.textAlign='center';ctx.fillStyle='#ff9f2e';ctx.fillText('x'+st.level,(k0%N)*cs+cs/2,(k0/N|0)*cs+cs*.62)}
+      const ok=res.caught>=BURST_MIN,[r0,c0]=res.pc[0],label=`${res.caught}/${BURST_MIN}`+(res.level>1?` · CHAIN x${res.level}`:'');
+      ctx.font=`bold ${cs*.5}px sans-serif`;ctx.textAlign='center';ctx.lineWidth=4;ctx.strokeStyle='#000';const half=ctx.measureText(label).width/2+4;
+      const chainRows=new Set(res.steps.filter(st=>st.type==='burst'&&st.level>1).flatMap(st=>[...st.set].map(k=>k/N|0))),below=chainRows.has(r0-1)&&r0+1<N;
+      const tx=Math.min(Math.max(c0*cs+cs/2,half),W-half),ty=below?(Math.max(...res.pc.map(([r])=>r))+1)*cs+cs*.55:Math.max(r0*cs-6,cs*.5);
+      ctx.strokeText(label,tx,ty);ctx.fillStyle=res.level>1?'#ff9f2e':ok?'#7f7':'#fff';ctx.fillText(label,tx,ty);
+    }else{
+      for(const [r,c] of p.cells)cube(drag.px+c*cs,drag.py+r*cs,cs,COLS[p.color],.45);
+    }
+  }
+  ctx.restore();
+  // tray
+  const sw=W/3,ts=Math.min(cs*.5,sw/6.5);
+  for(let i=0;i<3;i++){
+    const p=tray[i];ctx.strokeStyle='#444';ctx.lineWidth=1;ctx.strokeRect(i*sw+3,trayY,sw-6,H-trayY-4);
+    if(!p||(drag&&drag.slot===i))continue;
+    const h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1;
+    const ox=i*sw+(sw-w*ts)/2,oy=trayY+(H-trayY-h*ts)/2;
+    const ok=fits(p);for(const [r,c] of p.cells)cube(ox+c*ts,oy+r*ts,ts,COLS[p.color],ok?1:.25);
+  }
+  if(chainText){const a=Math.min(1,(now-chainT0)/180);ctx.font=`bold ${cs*(.9+.5*(1-a))}px sans-serif`;ctx.textAlign='center';ctx.lineWidth=6;ctx.strokeStyle='#000';ctx.strokeText(chainText,W/2,W/2);ctx.fillStyle='#ffd23f';ctx.fillText(chainText,W/2,W/2)}
+  if(paintPrev){ctx.font=`bold ${cs*.4}px sans-serif`;ctx.textAlign='center';ctx.fillStyle='#ff0';ctx.fillText('PAINT PREVIEW',W/2,cs*.45)}
+  if(banner&&now-bannerT0<2200){const a=Math.min(1,(now-bannerT0)/200),fade=Math.min(1,(2200-(now-bannerT0))/400);ctx.globalAlpha=fade;ctx.font=`bold ${cs*(.45+.2*(1-a))}px sans-serif`;ctx.textAlign='center';ctx.lineWidth=5;ctx.strokeStyle='#000';ctx.strokeText(banner,W/2,W*.3);ctx.fillStyle='#8fe3ff';ctx.fillText(banner,W/2,W*.3);ctx.globalAlpha=1}
+}
+
+// ---- input ----
+function pos(e){const b=cv.getBoundingClientRect();return {x:(e.clientX-b.left)*cv.width/b.width,y:(e.clientY-b.top)*cv.height/b.height}}
+function move(x,y){
+  const p=tray[drag.slot],h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1;
+  drag.px=x-w*cs/2;drag.py=y-h*cs/2-cs*1.4;
+  drag.ar=Math.round(drag.py/cs);drag.ac=Math.round(drag.px/cs);
+  drag.res=simulate(board,p,drag.ar,drag.ac);draw();
+}
+cv.addEventListener('pointerdown',e=>{
+  if(busy){skip=true;return}
+  if(jam){const {x,y}=pos(e);if(!contUsed&&y<W){const r=y/cs|0,c=x/cs|0;if(inb(r,c)&&board[r][c]>=0){paintAt={r,c};paintPrev=paintPreview(r,c);const P=paintPrev;
+    $('tinfo').textContent=`${P.painted.size} cubes turn this colour · `+(P.clump.size?`clump of ${P.clump.size} bursts${P.chains>1?' + chain':''}`:'no burst (needs 4+ touching)')+` → tray ${P.ok?'FITS ✓':'still jammed ✗'}`;$('apply').disabled=false;draw()}}return}
+  const {x,y}=pos(e);
+  if(y>trayY){const s=Math.floor(x/(W/3));if(tray[s]){drag={slot:s};cv.setPointerCapture(e.pointerId);move(x,y)}}
+});
+cv.addEventListener('pointermove',e=>{if(drag){const {x,y}=pos(e);move(x,y)}});
+const up=()=>{if(!drag)return;const d=drag;drag=null;if(d.res)commit(d.slot,d.ar,d.ac);else draw()};
+cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',()=>{drag=null;draw()});
+$('undo').onclick=()=>{
+  if(undoUsed||!undoSnap||busy)return;
+  board=undoSnap.board;tray=undoSnap.tray;score=undoSnap.score;placements=undoSnap.placements;
+  undoUsed=true;jam=false;paintAt=paintPrev=null;level=-1;applyLevel();banner='';$('panel').style.display='none';log('Undo used (1 per run).');hud();draw();
+};
+// paint bomb (the continue): the 8 cubes around the tapped one take its colour, and a touching clump of 4+ bursts and can chain
+const AROUND=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+function paintSim(b,r,c){
+  const g=copy(b),k=g[r][c],painted=new Set(),steps=[];
+  for(const [dr,dc] of AROUND){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&g[nr][nc]>=0){g[nr][nc]=k;painted.add(nr*N+nc)}}
+  const cl=flood(g,new Set([r*N+c]),k),after=copy(g),burstOk=cl.size>=AFTERSHOCK_MIN;let level=0;
+  if(burstOk)({level}=runChain(after,cl,steps));
+  return {g,after,painted,clump:burstOk?cl:new Set(),steps,level};
+}
+function paintPreview(r,c){const s=paintSim(board,r,c);return {...s,chains:s.level,ok:tray.some(p=>p&&fits(p,s.after))}}
+$('apply').onclick=async()=>{
+  if(contUsed||!paintPrev||busy)return;
+  const {r,c}=paintAt,k=board[r][c],ps=paintSim(board,r,c);contUsed=true;jam=false;paintAt=paintPrev=null;$('panel').style.display='none';busy=true;
+  let i=0;for(const [dr,dc] of AROUND){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&board[nr][nc]>=0&&board[nr][nc]!==k){board[nr][nc]=k;flash=new Set([nr*N+nc]);impact(nr,nc,i++);await sleep(Math.max(GAP_MIN,90*Math.pow(GAP_SPEEDUP,i)))}}
+  flash=null;combo=0;await play(ps.steps);board=ps.after;
+  log('Continue used (paint bomb).');busy=false;skip=false;chainText='';hud();draw();checkJam();
+};
+$('restart').onclick=newRun;
+addEventListener('resize',layout);
+// knob buttons: each row sets one rule and restarts the run
+const KNOBS=[['Reach',v=>RANGE=v,()=>RANGE,[[99,'whole line'],[3,'3'],[2,'2']]],['Catch',v=>BURST_MIN=v,()=>BURST_MIN,[[3,'3'],[4,'4']]],
+  ['Colours',v=>NC=v,()=>NC,[[4,'4'],[5,'5']]],['Cubes per tray',v=>INFLOW=v,()=>INFLOW,[[0,'0'],[2,'2'],[3,'3'],[6,'6']]],['Ramp',v=>RAMP_EVERY=v,()=>RAMP_EVERY,[[0,'off'],[5,'+1 every 5 trays']]],
+  ['Chain rule',v=>CHAIN_RULE=v,()=>CHAIN_RULE,[['touch','touching cubes'],['classic','classic']]],['Max chain',v=>MAX_CHAIN=v,()=>MAX_CHAIN,[[3,'3'],[5,'5'],[9,'9']]],
+  ['Director',v=>DIRECTOR=v,()=>DIRECTOR,[['off','off'],['help','help'],['kill','kill'],['auto','auto']],true],['Auto ends run at',v=>TARGET=v,()=>TARGET,[[90,'90'],[120,'120'],[999,'never']],true],
+  ['Pieces',v=>PIECESET=v,()=>PIECESET,[['blast','+ 1×1 and 3×3'],['clack','CLACK only']]],['Start cubes',v=>START_CUBES=v,()=>START_CUBES,[[0,'none'],[18,'18']]],
+  ['Board',v=>BOARD_FX=v,()=>BOARD_FX,[['none','plain'],['pulse','magnetic pulses'],['rust','rust']]],
+  ['Levels',v=>LEVELS_ON=v==='on',()=>LEVELS_ON?'on':'off',[['on','on (overrides colours and catch)'],['off','off']]],
+  ['Kill',v=>KILL_STYLE=v,()=>KILL_STYLE,[['none','none'],['drift','drift (no switch)'],['soft','soft squeeze'],['subtle','subtle'],['brutal','brutal']],true],['Drift starts at',v=>DRIFT_START=v,()=>DRIFT_START,[[30,'30'],[40,'40'],[60,'60']],true],['Rhythm',v=>RHYTHM=v==='on',()=>RHYTHM?'on':'off',[['on','charge → rescue'],['off','old help']],true]];
+function knobs(){$('knobs').innerHTML=KNOBS.map(([n,,get,opts],i)=>`<span>${n}</span>`+opts.map(([v,l])=>`<button data-k="${i}" data-v="${v}" class="${String(get())===String(v)?'on':''}">${l}</button>`).join('')+'&nbsp;').join('')}
+$('knobs').onclick=e=>{const b=e.target.closest('[data-k]');if(!b||busy)return;const K=KNOBS[+b.dataset.k],v=b.dataset.v;K[1](isNaN(+v)?v:+v);knobs();if(K[4])hud();else newRun()};
+// animation loop: shake decays, sparks fly and fall
+function frame(){shakeAmp*=.86;for(const p of sparks){p.x+=p.vx;p.y+=p.vy;p.vy+=.35;p.life-=.03}sparks=sparks.filter(p=>p.life>0);
+  const now=performance.now();pops=pops.filter(p=>now-p.t0<140);draw();requestAnimationFrame(frame)}
+knobs();layout();newRun();requestAnimationFrame(frame);
+// offline + installable
+if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+</script>
+</body>
+</html>
