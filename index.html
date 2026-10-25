@@ -159,7 +159,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
   <div class="hd"><b>Settings</b><button id="setclose" class="btn">Done</button></div>
   <div class="scroll">
     <h4>Feel</h4>
-    <div class="tgs"><button class="tg" id="tsnd">Sound</button><button class="tg" id="thap">Haptics</button><button class="tg" id="tsym">Colour symbols</button></div>
+    <div class="tgs"><button class="tg" id="tsnd">Sound</button><button class="tg" id="thap">Haptics</button><button class="tg" id="tsym">Colour symbols</button><button class="tg" id="tsil">Sound in silent mode</button></div>
     <h4>Juice tuning</h4>
     <div id="sliders"></div>
     <div class="row" style="margin-top:8px"><button class="btn ghost" id="jreset" style="height:40px;font-size:13px">Reset juice</button><button class="btn ghost" id="newrun" style="height:40px;font-size:13px">New run</button></div>
@@ -432,28 +432,74 @@ function dealTray0(){
   return worst;
 }
 
+// ---- chain trace: view only, never changes an outcome ----
+// After each blast every cube group touching it tries to become a magnet. The resolver only records the groups that
+// made it; this replays its steps and also records the ones that fell short, so the preview and the animation can show
+// "this blue pair touched the blast but only sees 1 blue" instead of the chain silently stopping.
+function traceWave(g,crater){ // same order and logic as touchWave
+  const border=new Set();
+  for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&g[nr][nc]>=0)border.add(nr*N+nc)}}
+  const seen=new Set(),out=[];
+  for(const k0 of border){
+    const color=g[k0/N|0][k0%N];if(seen.has(k0)||color<0)continue;
+    const grp=new Set([k0]),st=[k0];seen.add(k0);
+    while(st.length){const k=st.pop(),r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(inb(nr,nc)&&border.has(nk)&&!seen.has(nk)&&g[nr][nc]===color){seen.add(nk);grp.add(nk);st.push(nk)}}}
+    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp),ok=res.caught>=BURST_MIN;
+    out.push({grp,color,caught:res.caught,moves:res.moves,ok});
+    if(ok)for(let r=0;r<N;r++)g[r]=t[r];
+  }
+  return out;
+}
+// b0: the board the steps start from (piece already painted). Returns {level: [groups that tried after that blast]}
+function traceChain(b0,steps){
+  if(CHAIN_RULE!=='touch')return {};
+  const g=copy(b0),out={};
+  for(let i=0;i<steps.length;i++){const st=steps[i];
+    if(st.type==='pull')for(const m of st.moves){g[m.fr][m.fc]=-1;g[m.tr][m.tc]=st.color}
+    else if(st.type==='polish')for(const k of st.set)g[k/N|0][k%N]=-1;
+    else if(st.type==='burst'){for(const k of st.set)g[k/N|0][k%N]=-1;
+      if(steps[i+1]&&steps[i+1].type==='polish'){i++;for(const k of steps[i].set)g[k/N|0][k%N]=-1}
+      if(st.level<MAX_CHAIN)out[st.level]=traceWave(copy(g),st.set)}
+  }
+  return out;
+}
+
 // ---- juice (all of it is tunable in Settings → Juice tuning; defaults are the prototype's reference values) ----
 // cubes launch one after another, each gap and each flight a bit faster than the last; every impact shakes the plate
 const JUICE_DEF={GAP0:200,GAP_SPEEDUP:.75,GAP_MIN:30,FLY_BASE:70,FLY_PER_CELL:26,FLY_SPEEDUP:.9,FLY_FLOOR:.45,POP_MS:140,POP_SCALE:1.2,SHAKE:1,FLASH_MS:220,BURST_HOLD:160,WAKE_MS:260,SPARKS:7,TREMBLE:1};
 let J={...JUICE_DEF,...LS.get('juice',{})};
 let flying=[],pops=[],sparks=[],shards=[],rings=[],scorch=[],popups=[],rustGrow=new Map(),pending=new Map();
-let shakeAmp=0,kickX=0,kickY=0,flashAll=0,combo=0,chainT0=0,chainLvl=0,chainOut=null,wake=null,wakeT0=0,mag=null,counter=null,charge=null;
+let shakeAmp=0,kickX=0,kickY=0,flashAll=0,combo=0,chainT0=0,chainLvl=0,chainOut=null,wake=null,wakeT0=0,mag=null,counter=null,counters=[],charge=null;
+// chain feel: heat builds with the combo and the chain level; zoom punches and hit-stops grow with the level
+let heat=0,heatT=0,zoom=0,freezeUntil=0,seqScore0=0,touchGlow=new Map(),strain=new Map(),paintT0=-1e9,glowOp=-1;
 let trayT0=0,returning=null,wipe=null,jamT0=-1e9,stats={blasted:0,maxChain:0,newBest:false},runBest0=0,pendingReload=false;
 const CHAIN_COL=['#fff','#fff','#ffd23f','#ff9a2e','#ff5a3c','#ff3fa4','#ff3fa4','#ff3fa4','#ff3fa4','#ff3fa4'];
 const chainCol=l=>CHAIN_COL[Math.min(l,CHAIN_COL.length-1)];
 
 // ---- sound: synthesised, no files ----
-const SND={on:LS.get('snd',true)},HAP={on:LS.get('hap',true)};
-let AC,OUT,NB,audioOK=false; // the audio context only starts after the first touch (browser autoplay rules)
+const SND={on:LS.get('snd',true)},HAP={on:LS.get('hap',true)},SIL={on:LS.get('sil',true)};
+// Browsers only let sound start inside a real tap: touchend, pointerup or click (a touch's pointerdown does not count).
+// iOS can also leave the context 'suspended' or 'interrupted' after the app was in the background, and its silent
+// switch mutes web audio unless the audio session is 'playback'. So: unlock on every gesture until it runs, resume on return.
+let AC,OUT,NB,audioOK=false;
+function resumeAC(){try{const p=AC.resume();if(p&&p.catch)p.catch(()=>{})}catch(e){}}
 function audio(){
   if(!SND.on||!audioOK)return null;
   try{
     if(!AC){const A=window.AudioContext||window.webkitAudioContext;AC=new A();
       const comp=AC.createDynamicsCompressor();comp.threshold.value=-16;comp.ratio.value=5;OUT=AC.createGain();OUT.gain.value=.85;OUT.connect(comp).connect(AC.destination);
       NB=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);const d=NB.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}
-    if(AC.state==='suspended')AC.resume();return AC;
+    if(AC.state!=='running')resumeAC();return AC;
   }catch(e){return null}
 }
+function unlockAudio(){
+  audioOK=true;
+  try{if(navigator.audioSession)navigator.audioSession.type=SIL.on?'playback':'ambient'}catch(e){}
+  const a=audio();if(!a||a.state==='running')return;
+  try{const s=a.createBufferSource();s.buffer=a.createBuffer(1,1,22050);s.connect(a.destination);s.start(0)}catch(e){}
+}
+for(const ev of ['touchend','pointerup','click','keydown'])addEventListener(ev,unlockAudio,{capture:true,passive:true});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&AC&&AC.state!=='running')resumeAC()});
 function tone(f,dur,type,vol,f1,delay=0){const a=audio();if(!a)return;try{const t=a.currentTime+delay,o=a.createOscillator(),g=a.createGain();o.type=type;o.frequency.setValueAtTime(f,t);if(f1)o.frequency.exponentialRampToValueAtTime(f1,t+dur);
   g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+.004);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(g).connect(OUT);o.start(t);o.stop(t+dur+.02)}catch(e){}}
 function hiss(dur,vol,type,f,f1,q=1,delay=0){const a=audio();if(!a)return;try{const t=a.currentTime+delay,s=a.createBufferSource(),bq=a.createBiquadFilter(),g=a.createGain();s.buffer=NB;bq.type=type;bq.frequency.setValueAtTime(f,t);if(f1)bq.frequency.exponentialRampToValueAtTime(f1,t+dur);bq.Q.value=q;
@@ -465,14 +511,18 @@ const sfx={
   deny:()=>tone(240,.1,'triangle',.07,150),
   deal:()=>{for(let i=0;i<3;i++)tone(440+i*150,.06,'triangle',.035,(440+i*150)*1.4,i*.08)},
   charge:d=>{tone(170,d+.02,'sawtooth',.025,900);hiss(d,.06,'bandpass',500,4500,2)},
-  boom:ch=>{hiss(.6,.55,'lowpass',2600,80,.7);tone(125,.55,'sine',.6,36);tone(110*ch,.3,'sawtooth',.07,55*ch);if(ch>1)hiss(.3,.18,'highpass',2500,9000,.6)},
+  boom:ch=>{hiss(.6+.08*ch,.55,'lowpass',2600+400*ch,80,.7);tone(125,.55,'sine',.6,36);tone(110*ch,.3,'sawtooth',.07,55*ch);if(ch>1){hiss(.3+.05*ch,.12+.04*ch,'highpass',2500,9000,.6);tone(62,.7,'sine',.35,30)}},
   chime:()=>{tone(523,.2,'triangle',.07);tone(784,.24,'triangle',.06,0,.05)},
   polish:()=>[1319,1760,2093].forEach((f,i)=>tone(f,.15,'sine',.05,0,i*.045)),
   rasp:()=>{hiss(.15,.16,'bandpass',520,280,2.5);tone(140,.12,'sawtooth',.03,105)},
   jam:()=>{tone(330,.6,'triangle',.08,150);tone(165,.65,'square',.02,75)},
   splat:()=>{hiss(.14,.22,'bandpass',1600,400,1.2);tone(320,.12,'sine',.16,110)},
   best:()=>[523,659,784,1047].forEach((f,i)=>tone(f,.22,'triangle',.06,0,i*.08)),
-  rise:ch=>tone(260*ch,.28,'triangle',.05,520*ch)
+  // each chain level plays one more note of a rising pentatonic run, starting higher every level
+  chain:ch=>{const P=[0,2,4,7,9,12,14,16,19,21,24,26,28],base=392*Math.pow(2,(ch-2)*3/12);for(let i=0;i<=ch;i++){const f=base*Math.pow(2,P[i]/12);tone(f,.16,'triangle',.06,0,i*.05);tone(f*2,.12,'sine',.025,0,i*.05)}
+    hiss(.25,.05,'bandpass',800,6000,1.5)},
+  max:()=>{[0,4,7,12,16,19,24].forEach((n,i)=>tone(523*Math.pow(2,n/12),.3,'triangle',.06,0,.25+i*.06));[0,4,7].forEach(n=>tone(1046*Math.pow(2,n/12),.9,'sine',.04,0,.7))},
+  fizzle:()=>{tone(300,.18,'triangle',.045,130);hiss(.14,.07,'lowpass',900,200)}
 };
 function buzz(p){if(HAP.on&&navigator.vibrate)try{navigator.vibrate(p)}catch(e){}}
 
@@ -491,13 +541,13 @@ function newRun(){
   board=empty();let k=0;while(k<START_CUBES){const r=rnd(N),c=rnd(N);if(board[r][c]<0){board[r][c]=rnd(NC);k++}}
   score=0;placements=0;trays=0;cooldown=0;killStart=-1;level=-1;applyLevel();banner='';runStart=Date.now();undoSnap=null;undoUsed=false;contUsed=false;jam=false;paintAt=paintPrev=null;
   stats={blasted:0,maxChain:0,newBest:false};runBest0=LS.get('best',0);dispScore=0;
-  flying=[];pending.clear();rustGrow.clear();counter=null;mag=null;charge=null;chainText='';
+  flying=[];pending.clear();rustGrow.clear();strain.clear();touchGlow.clear();counter=null;counters=[];mag=null;charge=null;chainText='';heatT=0;
   tray=dealTray();planBoard();showJam(false);dealFx();hud();save();
   log('Drag a piece onto the plate. Catch 3 of its colour to blast.');
 }
 async function commit(slot,ar,ac){
   const p=tray[slot],res=simulate(board,p,ar,ac);if(!res)return;
-  busy=true;skip=false;combo=0;
+  busy=true;skip=false;combo=0;seqScore0=score;
   undoSnap={board:copy(board),tray:tray.slice(),score,placements};
   tray[slot]=null;placements++;applyLevel();
   const now=performance.now();
@@ -541,20 +591,36 @@ function dropCubes(){
 }
 // replays the resolver's steps; `pc` = the dropped piece's cells (the first magnet)
 async function play(steps,pc){
-  let magSet=pc?new Set(pc.map(([r,c])=>r*N+c)):null;
-  for(const st of steps){
+  let magSet=pc?new Set(pc.map(([r,c])=>r*N+c)):null,lvl=0;
+  const tr=traceChain(board,steps);
+  const polish=async st=>{for(const k of st.set){board[k/N|0][k%N]=-1;polishFx(k)}sfx.polish();await sleep(160)};
+  for(let i=0;i<steps.length;i++){const st=steps[i];
     if(st.type==='pull'){await animMoves(st.moves,st.color,magSet);magSet=null}
     else if(st.type==='wake'){
       wake=st.set;wakeT0=performance.now();magSet=st.set;sfx.chime();buzz(12);
-      for(const k of st.set)rings.push({x:(k%N+.5)*cs,y:((k/N|0)+.5)*cs,t0:wakeT0,dur:420,r0:cs*.35,r1:cs*1.1,col:'#ffd23f',w:cs*.09});
+      for(const k of st.set)rings.push({x:(k%N+.5)*cs,y:((k/N|0)+.5)*cs,t0:wakeT0,dur:420,r0:cs*.35,r1:cs*1.1,col:chainCol(lvl+1),w:cs*.09});
       await sleep(J.WAKE_MS);wake=null;
     }
-    else if(st.type==='polish'){
-      for(const k of st.set){board[k/N|0][k%N]=-1;polishFx(k)}
-      sfx.polish();await sleep(160);
+    else if(st.type==='polish')await polish(st);
+    else{
+      await burst(st.set,st.level);lvl=st.level;
+      if(steps[i+1]&&steps[i+1].type==='polish')await polish(steps[++i]);
+      await waveFx(tr[st.level]);
     }
-    else await burst(st.set,st.level);
   }
+}
+// the touch wave: every group touching the blast lights up; groups that can't catch BURST_MIN strain, show n/3 and fizzle
+async function waveFx(groups){
+  if(!groups||!groups.length||skip)return;
+  const now=performance.now();let anyOk=false,near=false;
+  for(const g of groups){
+    for(const k of g.grp)touchGlow.set(k,{t0:now,ok:g.ok});
+    if(g.ok){anyOk=true;continue}
+    if(g.caught>0){near=true;let x=0,top=N;for(const k of g.grp){x+=(k%N+.5)*cs;top=Math.min(top,k/N|0)}x/=g.grp.size;
+      counters.push({x,y:top*cs-cs*.5,n:g.caught,tp:now,color:g.color,fail:false,failAt:now+400,tEnd:0,small:true,label:'no chain'});
+      for(const m of g.moves)if(m.fr!==m.tr||m.fc!==m.tc)strain.set(m.fr*N+m.fc,{t0:now,until:now+400,dr:Math.sign(m.tr-m.fr),dc:Math.sign(m.tc-m.fc),tr:m.tr,tc:m.tc,color:g.color})}
+  }
+  if(!anyOk){if(near)sfx.fizzle();await sleep(near?480:220)}else await sleep(90);
 }
 async function animMoves(moves,color0,magSet){
   if(!moves.length)return;
@@ -563,7 +629,7 @@ async function animMoves(moves,color0,magSet){
     let x=0,y=0,top=N;for(const k of magSet){x+=(k%N+.5)*cs;y+=((k/N|0)+.5)*cs;top=Math.min(top,k/N|0)}x/=magSet.size;y/=magSet.size;
     mag={set:magSet,color:color0,t0};
     rings.push({x,y,t0,dur:600,r0:cs*.4,r1:cs*4.5,col:lighten(COLS[color0],.45),w:cs*.14});
-    counter={x,y:top*cs-cs*.62,n:0,tp:0,color:color0,tEnd:0,fail:false};
+    counter={x,y:top*cs-cs*.62,n:0,tp:0,color:color0,tEnd:0,fail:false};counters.push(counter);
   }
   // every claimed cube starts straining toward the magnet; they rip loose one by one
   for(const m of moves)pending.set(m.fr*N+m.fc,{t0,dr:Math.sign(m.tr-m.fr),dc:Math.sign(m.tc-m.fc),tr:m.tr,tc:m.tc,color:m.color??color0});
@@ -580,42 +646,50 @@ async function animMoves(moves,color0,magSet){
   }
   await Promise.all(arrivals);
   mag=null;
-  if(counter&&magSet&&counter.n<BURST_MIN){counter.fail=true;counter.tEnd=performance.now()+500}
+  if(counter&&magSet&&counter.n<BURST_MIN){counter.fail=true;counter.label='cools';counter.tEnd=performance.now()+550}
 }
 // one clack: rising pitch, a pop on the cube, a shake that grows with the combo
 function impact(r,c,i,dr=0,dc=0){
   sfx.clack(i);pops.push({k:r*N+c,t0:performance.now(),dr,dc});
   const a=Math.min(8,2+i*.6)*J.SHAKE;shakeAmp=Math.max(shakeAmp,a);kickX+=dc*a*.6;kickY+=dr*a*.6;buzz(6);
+  heatT=Math.max(heatT,Math.min(.6,Math.max(0,i-4)*.06));
   if(dr||dc){const U=cs/45*60,x=(c+.5+dc*.5)*cs,y=(r+.5+dr*.5)*cs,base=Math.atan2(dr,dc);
-    for(let n=0;n<6;n++){const an=base+(Math.random()<.5?1:-1)*Math.PI/2+(Math.random()-.5)*1.1+Math.PI*(Math.random()<.25?1:0),s=(1.5+Math.random()*3)*U;
+    for(let n=0;n<6+Math.min(12,i);n++){const an=base+(Math.random()<.5?1:-1)*Math.PI/2+(Math.random()-.5)*1.1+Math.PI*(Math.random()<.25?1:0),s=(1.5+Math.random()*3)*U;
       spark(x,y,Math.cos(an)*s,Math.sin(an)*s,'#fff2cc',.22+Math.random()*.18,.7)}}
 }
 function blast(set,chain){
-  const U=cs/45*60,now=performance.now();let sx=0,sy=0;
+  const U=cs/45*60,hs=chain>1?25+30*chain:0,now=performance.now(),t1=now+hs;let sx=0,sy=0; // hs: hit-stop, the world freezes a beat on a chain blast
+  freezeUntil=now+hs;zoom=Math.max(zoom,Math.min(.09,.012+.016*chain));
+  const nsp=Math.round(J.SPARKS*(1+.6*(chain-1))),gold=Math.min(.75,.3+.12*(chain-1)),sv=1+.15*(chain-1);
   for(const k of set){const r=k/N|0,c=k%N,col=COLS[board[r][c]]||'#ffffff',x=(c+.5)*cs,y=(r+.5)*cs;sx+=x;sy+=y;
-    for(let n=0;n<J.SPARKS;n++){const a=Math.random()*6.28,v=(2+Math.random()*4)*U;spark(x,y,Math.cos(a)*v,Math.sin(a)*v-2*U,Math.random()<.3?'#fff4d6':lighten(col,.35),.45+Math.random()*.3,1.1)}
+    for(let n=0;n<nsp;n++){const a=Math.random()*6.28,v=(2+Math.random()*4)*U*sv;spark(x,y,Math.cos(a)*v,Math.sin(a)*v-2*U,Math.random()<gold?(chain>2&&Math.random()<.5?chainCol(chain):'#fff4d6'):lighten(col,.35),.45+Math.random()*.3+.05*chain,1.1)}
     for(let n=0;n<2;n++){const a=Math.random()*6.28,v=(1.5+Math.random()*3.5)*U;shards.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-3*U,rot:Math.random()*6,vr:(Math.random()-.5)*22,s:cs*(.14+Math.random()*.16),col,life:.85,max:.85})}
     scorch.push({k,t0:now});
   }
   const n=set.size,cx=sx/n,cy=sy/n;
-  rings.push({x:cx,y:cy,t0:now,dur:420,r0:cs*.3,r1:cs*(1.3+Math.sqrt(n)*.75+chain*.3),col:'#fff3d1',w:cs*.24});
-  if(chain>1)rings.push({x:cx,y:cy,t0:now,dur:650,r0:cs*.5,r1:cs*(2+Math.sqrt(n)+chain*.6),col:chainCol(chain),w:cs*.12});
-  flashAll=Math.min(.32,.16+.06*chain+n*.006);
-  popups.push({x:cx,y:cy,text:'+'+n*10*chain,t0:now,col:chain>1?chainCol(chain):'#ffffff',size:cs*(.5+Math.min(.35,n*.018)+chain*.07)});
-  shakeAmp=Math.min(16,6+chain*3+set.size*.3)*J.SHAKE;
+  rings.push({x:cx,y:cy,t0:t1,dur:420,r0:cs*.3,r1:cs*(1.3+Math.sqrt(n)*.75+chain*.3),col:'#fff3d1',w:cs*.24});
+  for(let i=1;i<chain;i++)rings.push({x:cx,y:cy,t0:t1+i*80,dur:600+i*60,r0:cs*.5,r1:cs*(2+Math.sqrt(n)+i*1.1),col:chainCol(i+1),w:cs*(.1+.03*i)});
+  if(chain>=MAX_CHAIN&&chain>1){flashAll=.6;for(let i=0;i<40;i++){const a=Math.random()*6.28,v=(3+Math.random()*6)*U;shards.push({x:cx,y:cy,vx:Math.cos(a)*v,vy:Math.sin(a)*v-4*U,rot:Math.random()*6,vr:(Math.random()-.5)*24,s:cs*(.12+Math.random()*.14),col:COLS[i%NC],life:1.3,max:1.3})}}
+  else flashAll=Math.min(.45,.16+.07*chain+n*.006);
+  popups.push({x:cx,y:cy,text:'+'+n*10*chain,sub:chain>1?'×'+chain:'',t0:t1,col:chain>1?chainCol(chain):'#ffffff',size:cs*(.5+Math.min(.35,n*.018)+chain*.1)});
+  shakeAmp=Math.min(16+2*chain,6+chain*3+set.size*.3)*J.SHAKE;
   glowPulse(chain>1?chainCol(chain):'#ffae55',Math.min(.75,.22+.13*chain+n*.01));
   buzz(chain>1?[35,40,60]:35);
 }
 async function burst(set,chain){
   if(counter)counter.tEnd=performance.now()+180;
-  charge={set,t0:performance.now(),dur:J.FLASH_MS};
-  if(chain>1){chainText='CHAIN ×'+chain;chainLvl=chain;chainT0=performance.now();chainOut=null;sfx.rise(chain)}
-  sfx.charge(J.FLASH_MS/1000);await sleep(J.FLASH_MS);
-  charge=null;blast(set,chain);sfx.boom(chain);for(const k of set)board[k/N|0][k%N]=-1;
+  const hold=J.FLASH_MS+40*(chain-1); // higher chains charge a little longer: the anticipation grows with the level
+  charge={set,t0:performance.now(),dur:hold,lvl:chain};
+  sfx.charge(hold/1000);await sleep(hold);
+  charge=null;
+  if(chain>1){chainText=(chain>=MAX_CHAIN?'MAX CHAIN ×':'CHAIN ×')+chain;chainLvl=chain;chainT0=performance.now();chainOut=null;sfx.chain(chain);if(chain>=MAX_CHAIN)sfx.max()}
+  heatT=Math.max(heatT,chain>1?.35+.65*(chain-2)/Math.max(1,MAX_CHAIN-2):0);
+  blast(set,chain);sfx.boom(chain);for(const k of set)board[k/N|0][k%N]=-1;
   score+=set.size*10*chain;stats.blasted+=set.size;stats.maxChain=Math.max(stats.maxChain,chain);hud();await sleep(J.BURST_HOLD);
   return set;
 }
-function clearChain(){if(chainText)chainOut={text:chainText,lvl:chainLvl,t0:performance.now()};chainText=''}
+// the chain ends on a tally: the stamp holds with the run's total, then floats away
+function clearChain(){const now=performance.now();if(chainText){chainOut={text:chainText,lvl:chainLvl,t0:now,total:score-seqScore0};for(const p of popups)p.t0=Math.min(p.t0,now-650)}chainText='';heatT=0}
 function checkJam(quiet){
   if(tray.some(p=>p&&fits(p)))return;
   jam=true;paintAt=paintPrev=null;
@@ -772,8 +846,13 @@ function pill(text,x,y,size,fg,border){
   rr(ctx,x-w/2,y-h/2,w,h,h/2);ctx.fillStyle='rgba(12,14,18,.9)';ctx.fill();ctx.lineWidth=1.5;ctx.strokeStyle=border;ctx.stroke();ctx.fillStyle=fg;ctx.fillText(text,x,y+size*.04);
 }
 function arrowHead(x1,y1,x2,y2,h){const a=Math.atan2(y2-y1,x2-x1);ctx.beginPath();ctx.moveTo(x2,y2);ctx.lineTo(x2-h*Math.cos(a-.55),y2-h*Math.sin(a-.55));ctx.lineTo(x2-h*Math.cos(a+.55),y2-h*Math.sin(a+.55));ctx.closePath();ctx.fill()}
-function stamp(text,x,y,size,col,sc,alpha,rot){
-  ctx.save();ctx.globalAlpha=alpha;ctx.translate(x,y);ctx.rotate(rot);ctx.scale(sc,sc);ctx.font=`900 ${size}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';
+function stamp(text,x,y,size,col,sc,alpha,rot,rays=0,sub=''){
+  ctx.save();ctx.globalAlpha=alpha;ctx.translate(x,y);
+  if(rays>0){ctx.save();ctx.rotate(performance.now()/1400);ctx.globalCompositeOperation='lighter';const n=14,L=size*3.2*sc;
+    for(let i=0;i<n;i++){const a=i/n*Math.PI*2;const gr=ctx.createLinearGradient(0,0,Math.cos(a)*L,Math.sin(a)*L);gr.addColorStop(0,rgbaAny(col,.32*rays));gr.addColorStop(1,rgbaAny(col,0));ctx.fillStyle=gr;
+      ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(a-.09)*L,Math.sin(a-.09)*L);ctx.lineTo(Math.cos(a+.09)*L,Math.sin(a+.09)*L);ctx.closePath();ctx.fill()}ctx.restore()}
+  if(sub){ctx.font=`900 ${size*.6}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';ctx.lineWidth=size*.12;ctx.strokeStyle='rgba(16,10,6,.9)';ctx.strokeText(sub,0,size*.85*sc);ctx.fillStyle='#ffffff';ctx.fillText(sub,0,size*.85*sc)}
+  ctx.rotate(rot);ctx.scale(sc,sc);ctx.font=`900 ${size}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';
   ctx.shadowColor=col;ctx.shadowBlur=size*.5;ctx.lineWidth=size*.2;ctx.strokeStyle='rgba(16,10,6,.9)';ctx.strokeText(text,0,0);ctx.shadowBlur=0;
   const gr=ctx.createLinearGradient(0,-size/2,0,size/2);gr.addColorStop(0,'#ffffff');gr.addColorStop(.55,col);gr.addColorStop(1,darken(col[0]==='#'?col:'#ffffff',.15));ctx.fillStyle=gr;ctx.fillText(text,0,0);ctx.restore();
 }
@@ -784,7 +863,11 @@ function render(now){
   const g=paintPrev?paintPrev.g:board;
   ctx.save();
   ctx.translate(BX+(Math.random()*2-1)*shakeAmp+kickX,BY+(Math.random()*2-1)*shakeAmp+kickY);
+  if(zoom>.001){ctx.translate(W/2,W/2);ctx.scale(1+zoom,1+zoom);ctx.translate(-W/2,-W/2)}
   ctx.drawImage(plate,-FM,-FM,W+2*FM,W+2*FM);
+  // heat: the plate warms and its bezel glows in the chain colour as the sequence escalates
+  if(heat>.01){const hc=chainCol(Math.max(2,chainLvl||2));ctx.globalCompositeOperation='lighter';rr(ctx,0,0,W,W,cs*.14);ctx.fillStyle=`rgba(255,110,30,${.09*heat})`;ctx.fill();ctx.globalCompositeOperation='source-over';
+    ctx.save();ctx.shadowColor=hc;ctx.shadowBlur=cs*(.4+.8*heat);ctx.lineWidth=Math.max(2,cs*.06);ctx.strokeStyle=rgbaAny(hc,.25+.6*heat*(.75+.25*Math.sin(now/90)));rr(ctx,-FM*.45,-FM*.45,W+FM*.9,W+FM*.9,FM*.8);ctx.stroke();ctx.restore()}
   // scorch marks under the blast, a moment of heat first
   for(const s of scorch){const a=(now-s.t0)/900;if(a>=1)continue;const [x,y]=cellC(s.k),rg=ctx.createRadialGradient(x,y,0,x,y,cs*.75);rg.addColorStop(0,`rgba(0,0,0,${.5*(1-a)})`);rg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=rg;ctx.fillRect(x-cs,y-cs,2*cs,2*cs);
     if(a<.4){ctx.globalCompositeOperation='lighter';glowAt('#ff7a1a',x,y,.55*(1-a/.4),.9);ctx.globalCompositeOperation='source-over'}}
@@ -796,15 +879,18 @@ function render(now){
   // magnet aura: the magnet throbs while it pulls
   if(mag){const pu=.5+.5*Math.sin((now-mag.t0)/55);ctx.globalCompositeOperation='lighter';for(const k of mag.set){const [x,y]=cellC(k);glowAt(lighten(COLS[mag.color],.3),x,y,.22+.22*pu,1.05)}ctx.globalCompositeOperation='source-over'}
   if(wake){const a=clamp01((now-wakeT0)/120),pu=.6+.4*Math.sin((now-wakeT0)/40);ctx.globalCompositeOperation='lighter';for(const k of wake){const [x,y]=cellC(k);glowAt('#ffd23f',x,y,.6*a*pu,1.1)}ctx.globalCompositeOperation='source-over'}
+  // the touch wave: groups touching a blast flash (gold if they will chain, steel-white if they fall short)
+  if(touchGlow.size){ctx.globalCompositeOperation='lighter';for(const [k,t] of touchGlow){const a=(now-t.t0)/(t.ok?300:520);if(a>=1){touchGlow.delete(k);continue}const [x,y]=cellC(k);glowAt(t.ok?'#ffd23f':'#cfd8e6',x,y,(t.ok?.6:.45)*(1-a)*(a<.15?a/.15:1),1.05)}ctx.globalCompositeOperation='source-over'}
   // cubes
   const popMap=new Map();for(const p of pops)popMap.set(p.k,p);
   const claimPrev=drag&&drag.res?new Map(drag.res.moves.map(m=>[m.fr*N+m.fc,m])):null;
   for(let r=0;r<N;r++)for(let c=0;c<N;c++){const v=g[r][c];if(v<0)continue;const k=r*N+c;let x=(c+.5)*cs,y=(r+.5)*cs,sx=1,sy=1,hot=0;
-    const pd=pending.get(k);
+    const pd=pending.get(k),sn=strain.get(k);
+    if(sn){if(now>sn.until+180)strain.delete(k);else{const w=(now<sn.until?Math.min(1,(now-sn.t0)/160):-.6*Math.sin(clamp01((now-sn.until)/180)*Math.PI))*J.TREMBLE;x+=Math.sin(now*.09+k)*cs*.025*Math.abs(w)+sn.dc*cs*.07*w;y+=Math.cos(now*.1+k)*cs*.02*Math.abs(w)+sn.dr*cs*.07*w}}
     if(pd){const w=Math.min(1,(now-pd.t0)/350+.25)*J.TREMBLE;x+=Math.sin(now*.075+k*2.1)*cs*.035*w+pd.dc*cs*.06*w;y+=Math.cos(now*.093+k*1.3)*cs*.03*w+pd.dr*cs*.06*w}
     else if(claimPrev&&claimPrev.has(k)){const m=claimPrev.get(k),w=.5*J.TREMBLE;x+=Math.sin(now*.06+k)*cs*.018*w+Math.sign(m.tc-m.fc)*cs*.03;y+=Math.cos(now*.07+k)*cs*.015*w+Math.sign(m.tr-m.fr)*cs*.03}
     const p=popMap.get(k);if(p){const e=1-clamp01((now-p.t0)/J.POP_MS),s=1+(J.POP_SCALE-1)*e;if(p.dr||p.dc){const along=1-.16*e,perp=1+.1*e;sx=s*(p.dc?along:perp);sy=s*(p.dr?along:perp)}else sx=sy=s}
-    if(charge&&charge.set.has(k)){hot=clamp01((now-charge.t0)/charge.dur);const s=1+.09*hot;sx*=s;sy*=s;x+=(Math.random()-.5)*cs*.04*hot;y+=(Math.random()-.5)*cs*.04*hot}
+    if(charge&&charge.set.has(k)){hot=clamp01((now-charge.t0)/charge.dur);const s=1+(.09+.03*(charge.lvl-1))*hot;sx*=s;sy*=s;x+=(Math.random()-.5)*cs*.04*hot;y+=(Math.random()-.5)*cs*.04*hot}
     cubeAt(v,x,y,cs,sx,sy,1);
     if(hot){ctx.globalCompositeOperation='lighter';sprDraw(hotSpr(cs),x,y,cs,sx,sy,hot*.85);ctx.globalCompositeOperation='source-over'}
     if(jam&&!busy&&!paintPrev&&!contUsed){const w=.5+.5*Math.sin(now/260-(r+c)*.55);rr(ctx,x-cs*.44,y-cs*.44,cs*.88,cs*.88,cs*.18);ctx.lineWidth=1.5;ctx.strokeStyle=`rgba(255,255,255,${.06+.2*w})`;ctx.stroke()}
@@ -821,10 +907,13 @@ function render(now){
   if(pending.size){ctx.save();ctx.setLineDash([cs*.08,cs*.12]);ctx.lineDashOffset=-now*.09;ctx.lineWidth=Math.max(1.5,cs*.05);ctx.lineCap='round';
     for(const [k,pd] of pending){if(!pd.dr&&!pd.dc)continue;const [x,y]=cellC(k),tx=(pd.tc+.5)*cs,ty=(pd.tr+.5)*cs;const w=Math.min(1,(now-pd.t0)/250);ctx.strokeStyle=rgba(COLS[pd.color],.0+.55*w);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(tx,ty);ctx.stroke()}
     ctx.restore()}
+  if(strain.size){ctx.save();ctx.setLineDash([cs*.06,cs*.1]);ctx.lineDashOffset=-now*.06;ctx.lineWidth=Math.max(1.5,cs*.04);ctx.lineCap='round';
+    for(const [k,sn] of strain){const a=now<sn.until?Math.min(1,(now-sn.t0)/150):1-clamp01((now-sn.until)/180);const [x,y]=cellC(k);ctx.strokeStyle=`rgba(205,212,222,${.5*a})`;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo((sn.tc+.5)*cs,(sn.tr+.5)*cs);ctx.stroke()}
+    ctx.restore()}
   // flying cubes: ease-in, a hot streak, stretched along the flight
   for(const f of flying){const t=f.dur?clamp01((now-f.t0)/f.dur):1,e=t*t,col=COLS[f.color];
     const X=(f.fc+(f.tc-f.fc)*e+.5)*cs,Y=(f.fr+(f.tr-f.fr)*e+.5)*cs,tl=Math.max(0,t-.32)**2,TX=(f.fc+(f.tc-f.fc)*tl+.5)*cs,TY=(f.fr+(f.tr-f.fr)*tl+.5)*cs;
-    if(t>.05&&(X!==TX||Y!==TY)){ctx.globalCompositeOperation='lighter';const gr=ctx.createLinearGradient(TX,TY,X,Y);gr.addColorStop(0,rgba(col,0));gr.addColorStop(1,rgba(col,.6));ctx.strokeStyle=gr;ctx.lineWidth=cs*.6;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(TX,TY);ctx.lineTo(X,Y);ctx.stroke();ctx.globalCompositeOperation='source-over'}
+    if(t>.05&&(X!==TX||Y!==TY)){ctx.globalCompositeOperation='lighter';const gr=ctx.createLinearGradient(TX,TY,X,Y);const hcol=heat>.05?lighten(col,.4*heat):col;gr.addColorStop(0,rgbaAny(hcol,0));gr.addColorStop(1,rgbaAny(hcol,.6+.3*heat));ctx.strokeStyle=gr;ctx.lineWidth=cs*(.6+.2*heat);ctx.lineCap='round';ctx.beginPath();ctx.moveTo(TX,TY);ctx.lineTo(X,Y);ctx.stroke();ctx.globalCompositeOperation='source-over'}
     for(const [lag,al] of [[.18,.18],[.09,.36]]){const e2=Math.max(0,t-lag)**2;cubeAt(f.color,(f.fc+(f.tc-f.fc)*e2+.5)*cs,(f.fr+(f.tr-f.fr)*e2+.5)*cs,cs,1,1,al)}
     const st=.22*t;cubeAt(f.color,X,Y,cs,f.dc?1+st:1-st*.35,f.dr?1+st:1-st*.35,1)}
   // paint preview
@@ -859,11 +948,22 @@ function render(now){
     for(const st of res.steps)if(st.type==='burst'&&st.level>1){const cc=chainCol(st.level);ctx.setLineDash([cs*.12,cs*.08]);ctx.lineDashOffset=-now*.03;ctx.lineWidth=Math.max(2,cs*.065);ctx.strokeStyle=cc;
       for(const k of st.set){rr(ctx,(k%N)*cs+cs*.1,(k/N|0)*cs+cs*.1,cs*.8,cs*.8,cs*.16);ctx.stroke()}ctx.setLineDash([]);
       const k0=[...st.set][0];pill('×'+st.level,(k0%N+.5)*cs,(k0/N|0)*cs+cs*.5,cs*.26,cc,cc)}
+    // the chain, step by step: magnets that will wake (solid, in that level's colour) and what they pull
+    {let lv=0;for(const st of res.steps){if(st.type==='burst')lv=st.level;
+      else if(st.type==='wake'){const cc=chainCol(lv+1);ctx.lineWidth=Math.max(2,cs*.065);ctx.strokeStyle=cc;for(const k of st.set){rr(ctx,(k%N)*cs+cs*.04,(k/N|0)*cs+cs*.04,cs*.92,cs*.92,cs*.2);ctx.stroke()}}
+      else if(st.type==='pull'&&lv>0){const cc=chainCol(lv+1);ctx.strokeStyle=cc;ctx.fillStyle=cc;ctx.lineWidth=Math.max(1.5,cs*.045);
+        for(const m of st.moves)if(m.fr!==m.tr||m.fc!==m.tc){const x1=(m.fc+.5)*cs,y1=(m.fr+.5)*cs,x2=(m.tc+.5)*cs,y2=(m.tr+.5)*cs,ux=Math.sign(x2-x1),uy=Math.sign(y2-y1);ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2-ux*cs*.12,y2-uy*cs*.12);ctx.stroke();arrowHead(x1,y1,x2,y2,cs*.2)}}}}
+    // near misses: groups that touch a blast but can't see BURST_MIN of their colour (why the chain stops there)
+    if(drag.trace)for(const L in drag.trace)for(const f of drag.trace[L])if(!f.ok&&f.caught>0){
+      ctx.setLineDash([cs*.07,cs*.07]);ctx.lineWidth=Math.max(1.5,cs*.04);ctx.strokeStyle='rgba(205,212,222,.65)';
+      for(const k of f.grp){rr(ctx,(k%N)*cs+cs*.1,(k/N|0)*cs+cs*.1,cs*.8,cs*.8,cs*.16);ctx.stroke()}
+      for(const m of f.moves)if(m.fr!==m.tr||m.fc!==m.tc){ctx.beginPath();ctx.moveTo((m.fc+.5)*cs,(m.fr+.5)*cs);ctx.lineTo((m.tc+.5)*cs,(m.tr+.5)*cs);ctx.stroke()}
+      ctx.setLineDash([]);const k0=[...f.grp][0];pill(`${f.caught}/${BURST_MIN}`,(k0%N+.5)*cs,(k0/N|0)*cs+cs*.5,cs*.22,'#cdd4de','rgba(205,212,222,.45)')}
     ctx.restore();
     const ok=res.caught>=BURST_MIN,[r0,c0]=res.pc[0],label=`${res.caught}/${BURST_MIN}`+(res.level>1?` · CHAIN ×${res.level}`:'');
-    const chainRows=new Set(res.steps.filter(st=>st.type==='burst'&&st.level>1).flatMap(st=>[...st.set].map(k=>k/N|0))),below=chainRows.has(r0-1)&&r0+1<N;
-    const ty=below?(Math.max(...res.pc.map(([r])=>r))+1)*cs+cs*.45:Math.max(r0*cs-cs*.42,cs*.3-FM*.5);
-    const fg=res.level>1?chainCol(Math.min(res.level,5)):ok?'#7cf0a8':'#ffffff';pill(label,c0*cs+cs/2,ty,cs*.36,fg,res.level>1||ok?fg:'rgba(255,255,255,.25)');
+    // the outcome label sits above the plate, where it never hides a cell the preview is pointing at
+    const ty=Math.max(-FM-cs*.5,-BY+cs*.3),fg=res.level>1?chainCol(Math.min(res.level,5)):ok?'#7cf0a8':'#ffffff';
+    pill(label+(ok&&res.level<2?' · BLAST':ok?'':' · cools'),W/2,ty,cs*.36,fg,res.level>1||ok?fg:'rgba(255,255,255,.25)');
   }
   ctx.restore();
 
@@ -883,17 +983,30 @@ function render(now){
   if(returning){const p=tray[returning.slot];const a=easeOut(clamp01((now-returning.t0)/200));if(!p||a>=1)returning=null;else{const h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1,[scx,scy]=slotC(returning.slot),size=cs+(ts-cs)*a,cx=returning.x+(scx-returning.x)*a,cy=returning.y+(scy-returning.y)*a;
     for(const [r,c] of p.cells)cubeAt(p.color,cx+(c-w/2+.5)*size,cy+(r-h/2+.5)*size,size,1,1,1)}}
   // the catch counter: one notch per cube caught, hot once it reaches BURST_MIN
-  if(counter){const out=counter.tEnd?clamp01((now-counter.tEnd)/220):0;if(out>=1)counter=null;else{
-    const pop=1+.4*(1-clamp01((now-counter.tp)/200)),hit=counter.n>=BURST_MIN,R0=cs*.4*pop*(1-out*.4),x=Math.min(Math.max(counter.x,R0+2),W-R0-2),y=Math.max(counter.y,R0-FM),col=counter.fail?'#8a939d':hit?'#ffd23f':lighten(COLS[counter.color],.4);
+  for(const C of counters){if(C.failAt&&!C.fail&&now>=C.failAt){C.fail=true;C.tEnd=now+450;C.tp=now}
+    const out=C.tEnd?clamp01((now-C.tEnd)/220):0;if(out>=1){C.dead=true;continue}
+    const pop=1+.4*(1-clamp01((now-C.tp)/200)),hit=C.n>=BURST_MIN,R0=cs*(C.small?.36:.4)*pop*(1-out*.4),x=Math.min(Math.max(C.x,R0+2),W-R0-2),y=Math.max(C.y,R0-FM),col=C.fail?'#8a939d':hit?'#ffd23f':lighten(COLS[C.color],.4);
     ctx.globalAlpha=1-out;ctx.beginPath();ctx.arc(x,y,R0,0,7);ctx.fillStyle='rgba(12,14,18,.9)';ctx.fill();
-    const segs=Math.max(BURST_MIN,counter.n),gap=.18;for(let i=0;i<segs;i++){const a0=-Math.PI/2+i/segs*Math.PI*2+gap/2,a1=a0+Math.PI*2/segs-gap;ctx.beginPath();ctx.arc(x,y,R0-cs*.04,a0,a1);ctx.lineWidth=cs*.07;ctx.lineCap='round';ctx.strokeStyle=i<counter.n?col:'rgba(255,255,255,.14)';ctx.stroke()}
-    if(hit&&!counter.fail){ctx.shadowColor='#ffb02e';ctx.shadowBlur=cs*.4}
-    ctx.font=`900 ${R0*1.05}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=counter.fail?'#9aa3ad':hit?'#fff6d6':'#ffffff';ctx.fillText(counter.n,x,y+R0*.05);ctx.shadowBlur=0;ctx.globalAlpha=1}}
+    const segs=Math.max(BURST_MIN,C.n),gap=.18;for(let i=0;i<segs;i++){const a0=-Math.PI/2+i/segs*Math.PI*2+gap/2,a1=a0+Math.PI*2/segs-gap;ctx.beginPath();ctx.arc(x,y,R0-cs*.04,a0,a1);ctx.lineWidth=cs*(C.small?.055:.07);ctx.lineCap='round';ctx.strokeStyle=i<C.n?col:'rgba(255,255,255,.14)';ctx.stroke()}
+    if(hit&&!C.fail){ctx.shadowColor='#ffb02e';ctx.shadowBlur=cs*.4}
+    ctx.font=`900 ${R0*(C.small?.62:1.05)}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=C.fail?'#9aa3ad':hit?'#fff6d6':'#ffffff';ctx.fillText(C.small?`${C.n}/${BURST_MIN}`:C.n,x,y+R0*.05);ctx.shadowBlur=0;
+    if(C.fail&&C.label){ctx.font=`800 ${cs*.2}px ${FONT}`;ctx.lineJoin='round';ctx.lineWidth=cs*.07;ctx.strokeStyle='rgba(10,12,15,.9)';ctx.strokeText(C.label.toUpperCase(),x,y+R0+cs*.2);ctx.fillStyle='#b4bcc6';ctx.fillText(C.label.toUpperCase(),x,y+R0+cs*.2)}
+    ctx.globalAlpha=1}
+  if(counters.some(C=>C.dead))counters=counters.filter(C=>!C.dead);
   // floating scores
-  for(const p of popups){const a=(now-p.t0)/1000,y=p.y-cs*1.1*easeOut(a),s=a<.15?easeOutBack(a/.15):1,al=a>.65?1-(a-.65)/.35:1;
-    ctx.save();ctx.globalAlpha=Math.max(0,al);ctx.translate(Math.min(Math.max(p.x,cs),W-cs),y);ctx.scale(s,s);ctx.font=`900 ${p.size}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';ctx.lineWidth=p.size*.18;ctx.strokeStyle='rgba(10,8,6,.85)';ctx.strokeText(p.text,0,0);ctx.fillStyle=p.col;ctx.fillText(p.text,0,0);ctx.restore()}
-  if(chainText){const a=clamp01((now-chainT0)/260),col=chainCol(chainLvl);stamp(chainText,W/2,W*.4,cs*.95,col,2.3-1.3*easeOutBack(a),Math.min(1,a*3),-.06+.02*Math.sin(now/200))}
-  if(chainOut){const a=clamp01((now-chainOut.t0)/320);if(a>=1)chainOut=null;else stamp(chainOut.text,W/2,W*.4-cs*.6*a,cs*.95,chainCol(chainOut.lvl),1+.25*a,1-a,-.06)}
+  for(const p of popups){const a=(now-p.t0)/1000;if(a<0)continue;const y=p.y-cs*1.1*easeOut(a),s=a<.15?easeOutBack(a/.15):1,al=a>.65?1-(a-.65)/.35:1;
+    ctx.save();ctx.globalAlpha=Math.max(0,al);ctx.translate(Math.min(Math.max(p.x,cs),W-cs),y);ctx.scale(s,s);ctx.font=`900 ${p.size}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';ctx.lineWidth=p.size*.18;ctx.strokeStyle='rgba(10,8,6,.85)';ctx.strokeText(p.text,0,0);ctx.fillStyle=p.col;ctx.fillText(p.text,0,0);
+    if(p.sub){const w=ctx.measureText(p.text).width/2;ctx.font=`900 ${p.size*.55}px ${FONT}`;ctx.textAlign='left';ctx.lineWidth=p.size*.12;ctx.strokeText(p.sub,w+p.size*.12,-p.size*.25);ctx.fillStyle='#ffffff';ctx.fillText(p.sub,w+p.size*.12,-p.size*.25)}
+    ctx.restore()}
+  // the chain ladder: ×2 ×3 ×4 ×5 light up one by one, so every level reads as a step toward the max
+  {const live=chainText||chainOut,lv=chainText?chainLvl:chainOut?chainOut.lvl:0;if(live&&lv>=2){const fade=chainOut&&!chainText?1-clamp01((now-chainOut.t0-700)/300):Math.min(1,(now-chainT0)/150),top=Math.min(MAX_CHAIN,9),n=top-1,pw=cs*.78,gap=cs*.12,x0=W/2-(n*pw+(n-1)*gap)/2,y=Math.max(-FM-cs*.5,-BY+cs*.3);
+    ctx.globalAlpha=Math.max(0,fade);for(let L=2;L<=top;L++){const x=x0+(L-2)*(pw+gap)+pw/2,lit=L<=lv,cur=L===lv&&chainText,sc=cur?1+.25*(1-clamp01((now-chainT0)/300))+.04*Math.sin(now/90):1,cc=chainCol(L);
+      ctx.save();ctx.translate(x,y);ctx.scale(sc,sc);rr(ctx,-pw/2,-cs*.22,pw,cs*.44,cs*.22);if(lit){ctx.shadowColor=cc;ctx.shadowBlur=cur?cs*.5:cs*.2;ctx.fillStyle=cc}else ctx.fillStyle='rgba(12,14,18,.85)';ctx.fill();ctx.shadowBlur=0;
+      if(!lit){ctx.lineWidth=1;ctx.strokeStyle='rgba(255,255,255,.12)';ctx.stroke()}ctx.font=`900 ${cs*.24}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=lit?'#1e1204':'rgba(255,255,255,.3)';ctx.fillText('×'+L,0,1);ctx.restore()}
+    ctx.globalAlpha=1}}
+  if(chainText){const a=clamp01((now-chainT0)/260),col=chainCol(chainLvl),L=chainLvl;stamp(chainText,W/2,W*.4,cs*(.78+.1*L),col,2.4-1.4*easeOutBack(a),Math.min(1,a*3),-.06+.02*Math.sin(now/200),L>=3?Math.min(1,a*2)*(.5+.15*L):0)}
+  if(chainOut){const t=now-chainOut.t0,a=clamp01((t-700)/320),L=chainOut.lvl;if(a>=1)chainOut=null;else stamp(chainOut.text,W/2,W*.4-cs*.8*a,cs*(.78+.1*L),chainCol(L),(1+.25*a)*(t<180?1+.12*Math.sin(t/180*Math.PI):1),1-a,-.06,L>=3?(1-a)*.5:0,'+'+chainOut.total.toLocaleString())}
+  {const a=(now-paintT0)/1200;if(a>=0&&a<1)stamp('PAINT BOMB',W/2,W*.3,cs*.8,'#ffb03a',1.8-.8*easeOutBack(clamp01(a*5)),a>.7?(1-a)/.3:Math.min(1,a*8),-.05)}
   {const a=(now-jamT0)/1600;if(a>=0&&a<1)stamp('JAMMED',W/2,W*.45,cs*1.05,'#ff6b57',1.8-.8*easeOutBack(clamp01(a*6)),a>.7?(1-a)/.3:Math.min(1,a*8),-.08)}
   if(paintPrev)pill('PAINT PREVIEW',W/2,-FM*.5,cs*.26,'#ffd23f','rgba(255,210,63,.6)');
   if(banner&&now-bannerT0<2200){const a=Math.min(1,(now-bannerT0)/200),fade=Math.min(1,(2200-(now-bannerT0))/400);stamp(banner,W/2,W*.3,cs*.45,'#8fe3ff',1+.2*(1-a),fade,0)}
@@ -907,9 +1020,9 @@ function move(x,y){
   drag.px=x-w*cs/2;drag.py=y-h*cs/2-cs*1.4;
   drag.ar=Math.round(drag.py/cs);drag.ac=Math.round(drag.px/cs);
   const prev=drag.res;drag.res=simulate(board,p,drag.ar,drag.ac);
+  if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){const b0=copy(board);for(const [r,c] of drag.res.pc)b0[r][c]=p.color;drag.trace=traceChain(b0,drag.res.steps)}else if(!drag.res)drag.trace=null;
   if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){buzz(3);if(drag.res.caught>=BURST_MIN&&(!prev||prev.caught<BURST_MIN))tone(660+drag.res.level*110,.05,'triangle',.03)}
 }
-addEventListener('pointerdown',()=>{audioOK=true;audio()},{capture:true});
 cv.addEventListener('pointerdown',e=>{
   if(busy){skip=true;return}
   const {x,y}=pos(e);
@@ -938,7 +1051,7 @@ function paintSim(b,r,c){
 function paintPreview(r,c){const s=paintSim(board,r,c);return {...s,chains:s.level,ok:tray.some(p=>p&&fits(p,s.after))}}
 $('apply').onclick=async()=>{
   if(contUsed||!paintPrev||busy)return;
-  const {r,c}=paintAt,k=board[r][c],ps=paintSim(board,r,c);contUsed=true;jam=false;paintAt=paintPrev=null;showJam(false);busy=true;
+  const {r,c}=paintAt,k=board[r][c],ps=paintSim(board,r,c);contUsed=true;jam=false;paintAt=paintPrev=null;showJam(false);busy=true;seqScore0=score;paintT0=performance.now();
   const [px,py]=cellC(r*N+c),U=cs/45*60;rings.push({x:px,y:py,t0:performance.now(),dur:500,r0:cs*.3,r1:cs*2.2,col:lighten(COLS[k],.3),w:cs*.2});
   for(let n=0;n<28;n++){const a=Math.random()*6.28,s=(1.5+Math.random()*4)*U;spark(px,py,Math.cos(a)*s,Math.sin(a)*s-U,lighten(COLS[k],.2),.5,1.3)}sfx.splat();buzz(30);
   let i=0;for(const [dr,dc] of AROUND){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&board[nr][nc]>=0&&board[nr][nc]!==k){board[nr][nc]=k;flash=new Set([nr*N+nc]);impact(nr,nc,i++);await sleep(Math.max(J.GAP_MIN,90*Math.pow(J.GAP_SPEEDUP,i)))}}
@@ -975,8 +1088,9 @@ function sliders(){$('sliders').innerHTML=SLIDERS.map(([k,l,u,mn,mx,st])=>`<labe
 $('sliders').oninput=e=>{const t=e.target,k=t.dataset.j;if(!k)return;J[k]=+t.value;t.nextElementSibling.textContent=fmtJ(J[k],t.dataset.u);LS.set('juice',J)};
 $('jreset').onclick=()=>{J={...JUICE_DEF};LS.set('juice',J);sliders()};
 $('newrun').onclick=()=>{if(busy)return;closeSet();newRun()};
-function toggles(){$('tsnd').setAttribute('aria-pressed',SND.on);$('thap').setAttribute('aria-pressed',HAP.on);$('tsym').setAttribute('aria-pressed',SYM)}
-$('tsnd').onclick=()=>{SND.on=!SND.on;LS.set('snd',SND.on);toggles();if(SND.on)tone(660,.08,'triangle',.05)};
+function toggles(){$('tsil').setAttribute('aria-pressed',SIL.on);$('tsil').style.display=navigator.audioSession?'':'none';$('tsnd').setAttribute('aria-pressed',SND.on);$('thap').setAttribute('aria-pressed',HAP.on);$('tsym').setAttribute('aria-pressed',SYM)}
+$('tsnd').onclick=()=>{SND.on=!SND.on;LS.set('snd',SND.on);toggles();if(SND.on){unlockAudio();tone(660,.08,'triangle',.05)}};
+$('tsil').onclick=()=>{SIL.on=!SIL.on;LS.set('sil',SIL.on);toggles();unlockAudio()};
 $('thap').onclick=()=>{HAP.on=!HAP.on;LS.set('hap',HAP.on);toggles();buzz(15)};
 $('tsym').onclick=()=>{SYM=!SYM;LS.set('sym',SYM);SPR.clear();toggles()};
 function closeSet(){$('set').classList.remove('on');if(jam)showJam(true);tryReload()}
@@ -996,8 +1110,10 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 // ---- frame loop: time-based so it feels the same at 60 and 120 Hz ----
 let lastT=0;
 function frame(now){
-  const dt=Math.min(.05,Math.max(0,(now-(lastT||now))/1000)),f=dt*60;lastT=now;
-  shakeAmp*=Math.pow(.86,f);if(shakeAmp<.3)shakeAmp=0;kickX*=Math.pow(.72,f);kickY*=Math.pow(.72,f);flashAll*=Math.pow(.84,f);
+  const rdt=Math.min(.05,Math.max(0,(now-(lastT||now))/1000)),dt=now<freezeUntil?0:rdt,f=dt*60;lastT=now;
+  shakeAmp*=Math.pow(.86,f);if(shakeAmp<.3)shakeAmp=0;kickX*=Math.pow(.72,f);kickY*=Math.pow(.72,f);flashAll*=Math.pow(.84,f);zoom*=Math.pow(.88,f);
+  heat+=(heatT-heat)*Math.min(1,rdt*(heatT>heat?8:2.5));
+  {const op=Math.round(heat*30)/100;if(op!==glowOp){glowOp=op;const el=$('glow');el.style.setProperty('--glow',chainCol(Math.max(2,chainLvl||2)));el.style.opacity=op}}
   const G=(cs||45)/45*1260;
   for(const p of sparks){p.x+=p.vx*dt;p.y+=p.vy*dt;if(!p.star)p.vy+=G*dt;p.vx*=Math.pow(.985,f);p.life-=dt}sparks=sparks.filter(p=>p.life>0);
   for(const s of shards){s.x+=s.vx*dt;s.y+=s.vy*dt;s.vy+=G*dt;s.rot+=s.vr*dt;s.life-=dt}shards=shards.filter(s=>s.life>0);
@@ -1014,7 +1130,7 @@ requestAnimationFrame(frame);
 {let skipTitle=false;try{skipTitle=sessionStorage.getItem('clack_skipTitle')==='1';sessionStorage.removeItem('clack_skipTitle')}catch(e){}
   const best=LS.get('best',0);$('tbest').textContent=best?`Best ${best.toLocaleString()}`:'';$('play').textContent=placements>0?'Continue':'Play';
   if(skipTitle)$('title').classList.add('hidden');
-  $('play').onclick=()=>{audioOK=true;audio();$('title').classList.add('hidden');dealFx();buzz(10)};}
+  $('play').onclick=()=>{unlockAudio();$('title').classList.add('hidden');dealFx();buzz(10)};}
 
 // ---- offline + installable, and installed copies update themselves ----
 // a new version activates in the background; the page reloads at the next calm moment and the saved run resumes

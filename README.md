@@ -6,7 +6,9 @@ Drag a piece onto the plate: cubes of its colour in its rows and columns fly in.
 
 This build: empty start, Block Blast-style pieces (including 1×1 and 3×3), rust on, director on auto with no kill point (it never ends a run on purpose).
 
-Look and feel: enamel cubes on a brushed-steel plate, synthesised sound, haptics on Android, a title screen, a results screen, and save and resume (a run survives closing the app). The settings button (top right) has sound, haptics and colour-symbol toggles, sliders for every juice timing (saved on the device), and the rule switches for testing.
+Look and feel: enamel cubes on a brushed-steel plate, synthesised sound, haptics on Android, a title screen, a results screen, and save and resume (a run survives closing the app). Chains are readable: after every blast, the groups touching it light up; the ones that can't catch 3 of their colour show their count ("1/3 · no chain"), in the drag preview and in the animation. Chains escalate per level (hit-stop, zoom, ladder ×2…×5, rising notes, an end total).
+
+The settings button (top right) has sound, haptics, "sound in silent mode" (iPhone) and colour-symbol toggles, sliders for every juice timing (saved on the device), and the rule switches for testing.
 
 ## Put it online (GitHub Pages)
 
