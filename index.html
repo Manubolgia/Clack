@@ -50,7 +50,7 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 
 /* stage */
 #stage{flex:1;width:100%;max-width:520px;position:relative;min-height:0}
-canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
+canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized in px by layout(), so it is never stretched */
 #cap{position:absolute;left:16px;right:16px;text-align:center;font-size:12px;line-height:1.35;color:var(--ink3);pointer-events:none;transition:opacity .3s}
 #toast{position:absolute;left:50%;top:6px;transform:translate(-50%,-30px);opacity:0;pointer-events:none;padding:7px 14px;border-radius:999px;
   background:rgba(14,16,20,.9);border:1px solid rgba(255,255,255,.1);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;transition:transform .35s cubic-bezier(.2,.9,.3,1.3),opacity .25s;white-space:nowrap}
@@ -121,6 +121,9 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
 .card .btn{width:100%;flex:none;height:56px;font-size:17px;animation:fadein .5s 1.5s both}
 .bestt{margin-top:14px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3);animation:fadein .5s 1.5s both}
 @keyframes fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.news ul,#hist ul{text-align:left;margin:0 0 22px;padding-left:18px;display:grid;gap:9px;font-size:13.5px;line-height:1.4;color:#cfd5dc}
+#hist{font-size:12.5px;color:var(--ink2)}#hist b{display:block;margin:12px 0 6px;color:var(--ink);font-size:12px;letter-spacing:.08em}#hist ul{font-size:12.5px;gap:6px;margin-bottom:6px}
+#news .btn{animation:none}
 #results h2{margin:0 0 6px;font-size:13px;letter-spacing:.3em;text-transform:uppercase;color:var(--ink2);font-weight:800}
 #rscore{font-size:72px;font-weight:900;letter-spacing:-.04em;line-height:1;font-variant-numeric:tabular-nums;text-shadow:0 4px 0 rgba(0,0,0,.4)}
 #rnew{display:inline-block;margin:12px 0 0;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:900;letter-spacing:.18em;color:#2b1600;background:linear-gradient(#ffd45a,#ff9b2e);animation:bestpulse 1.2s ease-in-out infinite}
@@ -160,9 +163,12 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
   <div class="scroll">
     <h4>Feel</h4>
     <div class="tgs"><button class="tg" id="tsnd">Sound</button><button class="tg" id="thap">Haptics</button><button class="tg" id="tsym">Colour symbols</button><button class="tg" id="tsil">Sound in silent mode</button></div>
+    <div class="row" style="margin-top:8px;align-items:center"><button class="btn ghost" id="stest" style="height:36px;font-size:13px;flex:none;padding:0 14px">Test sound</button><div id="ainfo" style="font-size:11px;color:var(--ink3);line-height:1.35"></div></div>
     <h4>Juice tuning</h4>
     <div id="sliders"></div>
     <div class="row" style="margin-top:8px"><button class="btn ghost" id="jreset" style="height:40px;font-size:13px">Reset juice</button><button class="btn ghost" id="newrun" style="height:40px;font-size:13px">New run</button></div>
+    <h4>What's new</h4>
+    <div id="hist"></div>
     <h4>Rules for testing</h4>
     <div id="rule"></div>
     <div class="opt" id="knobs"></div>
@@ -180,6 +186,15 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
     </div>
     <button id="play" class="btn hot">Play</button>
     <div class="bestt" id="tbest"></div>
+  </div>
+</div>
+
+<div id="news" class="ov hidden" style="z-index:9">
+  <div class="card news">
+    <h2 style="margin:0 0 4px;font-size:13px;letter-spacing:.3em;text-transform:uppercase;color:var(--ink2);font-weight:800">What's new</h2>
+    <div id="newsv" style="font-size:12px;color:var(--ink3);margin-bottom:16px"></div>
+    <ul id="newsl"></ul>
+    <button id="newsok" class="btn hot">Got it</button>
   </div>
 </div>
 
@@ -485,25 +500,33 @@ const chainCol=l=>CHAIN_COL[Math.min(l,CHAIN_COL.length-1)];
 // ---- sound: synthesised, no files ----
 const SND={on:LS.get('snd',true)},HAP={on:LS.get('hap',true)},SIL={on:LS.get('sil',true)};
 // Browsers only let sound start inside a real tap: touchend, pointerup or click (a touch's pointerdown does not count).
-// iOS can also leave the context 'suspended' or 'interrupted' after the app was in the background, and its silent
-// switch mutes web audio unless the audio session is 'playback'. So: unlock on every gesture until it runs, resume on return.
-let AC,OUT,NB,audioOK=false;
+// iOS can leave a context 'suspended' or 'interrupted' after the app was in the background or the audio session changed,
+// and sometimes it never comes back. So: the audio session type is set once, before the context exists (changing it on a
+// live context can silence it); every tap tries to resume a context that isn't running; a context still stuck 400 ms after
+// a tap is thrown away and rebuilt on the next tap.
+let AC,OUT,NB,audioOK=false,acBad=false,acBuilds=0;
 function resumeAC(){try{const p=AC.resume();if(p&&p.catch)p.catch(()=>{})}catch(e){}}
+function makeAC(){
+  if(AC){try{const p=AC.close();if(p&&p.catch)p.catch(()=>{})}catch(e){}}
+  try{if(navigator.audioSession){const t=SIL.on?'playback':'auto';if(navigator.audioSession.type!==t)navigator.audioSession.type=t}}catch(e){}
+  const A=window.AudioContext||window.webkitAudioContext;AC=new A();acBad=false;acBuilds++;
+  const comp=AC.createDynamicsCompressor();comp.threshold.value=-16;comp.ratio.value=5;OUT=AC.createGain();OUT.gain.value=.85;OUT.connect(comp).connect(AC.destination);
+  NB=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);const d=NB.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  AC.onstatechange=audioInfo;audioInfo();
+}
 function audio(){
   if(!SND.on||!audioOK)return null;
-  try{
-    if(!AC){const A=window.AudioContext||window.webkitAudioContext;AC=new A();
-      const comp=AC.createDynamicsCompressor();comp.threshold.value=-16;comp.ratio.value=5;OUT=AC.createGain();OUT.gain.value=.85;OUT.connect(comp).connect(AC.destination);
-      NB=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);const d=NB.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}
-    if(AC.state!=='running')resumeAC();return AC;
-  }catch(e){return null}
+  try{if(!AC)makeAC();if(AC.state!=='running')resumeAC();return AC}catch(e){return null}
 }
 function unlockAudio(){
-  audioOK=true;
-  try{if(navigator.audioSession)navigator.audioSession.type=SIL.on?'playback':'ambient'}catch(e){}
+  audioOK=true;if(!SND.on)return;
+  try{if(acBad)makeAC()}catch(e){}
   const a=audio();if(!a||a.state==='running')return;
   try{const s=a.createBufferSource();s.buffer=a.createBuffer(1,1,22050);s.connect(a.destination);s.start(0)}catch(e){}
+  setTimeout(()=>{if(AC===a&&a.state!=='running'){acBad=true;audioInfo()}},400);
 }
+function audioInfo(){const el=document.getElementById('ainfo');if(!el)return;
+  el.textContent=!SND.on?'Sound is off':!AC?'Sound starts after your first tap':`Sound: ${AC.state}${acBad?' (stuck, rebuilding on next tap)':''} · built ${acBuilds}× · silent-mode setting ${navigator.audioSession?(navigator.audioSession.type||'?'):'not supported here'}`}
 for(const ev of ['touchend','pointerup','click','keydown'])addEventListener(ev,unlockAudio,{capture:true,passive:true});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&AC&&AC.state!=='running')resumeAC()});
 function tone(f,dur,type,vol,f1,delay=0){const a=audio();if(!a)return;try{const t=a.currentTime+delay,o=a.createOscillator(),g=a.createGain();o.type=type;o.frequency.setValueAtTime(f,t);if(f1)o.frequency.exponentialRampToValueAtTime(f1,t+dur);
@@ -838,7 +861,7 @@ function layout(){
   cs=Math.floor(Math.max(24,Math.min(64,sw0/8.8,(sh0-28)/12.5)));
   W=cs*N;FM=Math.round(cs*.38);trayY=W+FM+Math.round(cs*.45);TH=Math.round(cs*2.75);H=trayY+TH;ts=Math.round(Math.min(cs*.55,(W/3-cs*.5)/5,(TH-cs*.4)/3.4));
   CW=sw0;CH=sh0;BX=Math.round((CW-W)/2);const contentH=FM+H+28;BY=Math.round(FM+Math.max(0,(CH-contentH)*.42));
-  cv.width=Math.round(CW*DPR);cv.height=Math.round(CH*DPR);
+  cv.width=Math.round(CW*DPR);cv.height=Math.round(CH*DPR);cv.style.width=CW+'px';cv.style.height=CH+'px';
   SPR.clear();plate=plateSpr();slotSp=slotSpr(W/3-8,TH);
   $('cap').style.top=(BY+H+cs*.22)+'px';
 }
@@ -1073,6 +1096,27 @@ function showResults(){
 }
 $('again').onclick=()=>{$('results').classList.add('hidden');newRun()};
 addEventListener('resize',layout);
+// the play area can change size without a resize event (an installed iPhone app settling its safe areas after a relaunch
+// or an update reload), which used to leave the board squashed; re-measure whenever the stage itself changes size
+if(window.ResizeObserver)new ResizeObserver(()=>{if($('stage').clientWidth!==CW||$('stage').clientHeight!==CH)layout()}).observe($('stage'));
+addEventListener('pageshow',layout);addEventListener('orientationchange',()=>setTimeout(layout,250));
+
+// ---- what's new: shown once after each update, full history in Settings ----
+// Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
+const APP_VERSION=6;
+const CHANGES=[
+  [6,'Board and sound fixes',['Fixed the board sometimes looking squashed (not square) after the app reopened or updated itself; touches also land in the right cells again.','Sound rebuilt to survive iPhone quirks: if iOS leaves the sound stuck after the app was in the background, the next tap restarts it.','Settings → Feel has a "Test sound" button and a line showing the sound status.','This "What\'s new" card, and the full history in Settings.']],
+  [5,'Chains that make sense',['New chain rule, "4 together": cubes touching a blast chain when the clump they would blast has 4 or more cubes. Before, a line of 4 chained when 1 cube touched the blast but not when 2 did. The old rule is in Settings → Rules for testing.','Fixed a rare bug where a chain could blast an empty cell and score a cube twice.','Fixed the catch counter sometimes staying stuck on screen after a chain.']],
+  [4,'Readable, louder chains',['After a blast, the groups touching it light up; the ones that can\'t chain show "n/3 · no chain", in the preview and in the animation.','Chains escalate per level: hit-stop, zoom, a ×2…×5 ladder, rising notes and an end total.','Sound fix for phones, and "Sound in silent mode" for iPhone.']],
+  [3,'New look',['Enamel cubes on a brushed-steel plate, new animations, synthesised sound and haptics, title and results screens, saved runs, juice sliders in Settings. The app updates itself.']],
+];
+function newsHtml(list){return list.map(([v,t,items])=>`<b>v${v} · ${t}</b><ul>${items.map(i=>`<li>${i}</li>`).join('')}</ul>`).join('')}
+$('hist').innerHTML=newsHtml(CHANGES);
+{const seen=LS.get('seenVer',0);
+  if(seen&&seen<APP_VERSION){const fresh=CHANGES.filter(c=>c[0]>seen);$('newsv').textContent=`Updated to v${APP_VERSION}`;$('newsl').innerHTML=fresh.flatMap(c=>c[2]).map(i=>`<li>${i}</li>`).join('');$('news').classList.remove('hidden')}
+  else if(!seen&&LS.get('runs',0)+(LS.get('run',null)?1:0)>0){$('newsv').textContent=`Updated to v${APP_VERSION}`;$('newsl').innerHTML=CHANGES[0][2].map(i=>`<li>${i}</li>`).join('');$('news').classList.remove('hidden')}
+  LS.set('seenVer',APP_VERSION)}
+$('newsok').onclick=()=>{unlockAudio();$('news').classList.add('hidden')};
 
 // ---- settings ----
 // knob buttons: each row sets one rule and restarts the run
@@ -1095,12 +1139,13 @@ $('sliders').oninput=e=>{const t=e.target,k=t.dataset.j;if(!k)return;J[k]=+t.val
 $('jreset').onclick=()=>{J={...JUICE_DEF};LS.set('juice',J);sliders()};
 $('newrun').onclick=()=>{if(busy)return;closeSet();newRun()};
 function toggles(){$('tsil').setAttribute('aria-pressed',SIL.on);$('tsil').style.display=navigator.audioSession?'':'none';$('tsnd').setAttribute('aria-pressed',SND.on);$('thap').setAttribute('aria-pressed',HAP.on);$('tsym').setAttribute('aria-pressed',SYM)}
-$('tsnd').onclick=()=>{SND.on=!SND.on;LS.set('snd',SND.on);toggles();if(SND.on){unlockAudio();tone(660,.08,'triangle',.05)}};
-$('tsil').onclick=()=>{SIL.on=!SIL.on;LS.set('sil',SIL.on);toggles();unlockAudio()};
+$('tsnd').onclick=()=>{SND.on=!SND.on;LS.set('snd',SND.on);toggles();if(SND.on){unlockAudio();tone(660,.08,'triangle',.05)}audioInfo()};
+$('stest').onclick=()=>{unlockAudio();[523,659,784].forEach((f,i)=>tone(f,.18,'triangle',.07,0,i*.09));setTimeout(audioInfo,300)};
+$('tsil').onclick=()=>{SIL.on=!SIL.on;LS.set('sil',SIL.on);toggles();acBad=true;unlockAudio();tone(660,.08,'triangle',.05);setTimeout(audioInfo,300)};
 $('thap').onclick=()=>{HAP.on=!HAP.on;LS.set('hap',HAP.on);toggles();buzz(15)};
 $('tsym').onclick=()=>{SYM=!SYM;LS.set('sym',SYM);SPR.clear();toggles()};
 function closeSet(){$('set').classList.remove('on');if(jam)showJam(true);tryReload()}
-$('gear').onclick=()=>{hud();toggles();$('jam').classList.remove('on');$('set').classList.add('on')};
+$('gear').onclick=()=>{hud();toggles();audioInfo();$('jam').classList.remove('on');$('set').classList.add('on')};
 $('setclose').onclick=closeSet;
 
 // ---- save and resume: the run survives closing the app and updates ----
@@ -1126,6 +1171,7 @@ function frame(now){
   pops=pops.filter(p=>now-p.t0<J.POP_MS);rings=rings.filter(r=>now-r.t0<r.dur);scorch=scorch.filter(s=>now-s.t0<900);popups=popups.filter(p=>now-p.t0<1000);
   if(dispScore!==score){const d=score-dispScore;dispScore=d>0?Math.min(score,dispScore+Math.max(1,Math.ceil(d*Math.min(1,dt*9)))):score;scoreBump=1;$('score').textContent=Math.round(dispScore).toLocaleString()}
   if(scoreBump>0){scoreBump=Math.max(0,scoreBump-dt*5);$('score').style.transform=`scale(${1+.12*scoreBump})`}
+  {const st=$('stage');if(st.clientWidth&&(st.clientWidth!==CW||st.clientHeight!==CH))layout()}
   render(now);requestAnimationFrame(frame);
 }
 

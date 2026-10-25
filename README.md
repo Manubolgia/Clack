@@ -21,7 +21,7 @@ The settings button (top right) has sound, haptics, "sound in silent mode" (iPho
 - iPhone (Safari): open the link, tap Share → "Add to Home Screen".
 - Android (Chrome): open the link, tap the menu → "Install app" (or "Add to Home screen").
 
-It works offline after the first visit. When you change the game, bump `VERSION` in `sw.js`: installed copies check for updates whenever the app is opened or brought back to the front, and reload themselves at the next calm moment (the run resumes where it was).
+It works offline after the first visit. When you change the game, bump `VERSION` in `sw.js` and `APP_VERSION` in `index.html` (keep them equal) and add an entry to `CHANGES` in `index.html`, which players see once as "What's new" (the full history is in Settings). Installed copies check for updates whenever the app is opened or brought back to the front, and reload themselves at the next calm moment (the run resumes where it was).
 
 ## Chain rule
 
