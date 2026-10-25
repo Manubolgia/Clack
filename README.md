@@ -10,7 +10,7 @@ This build: empty start, Block Blast-style pieces (including 1×1 and 3×3), rus
 
 1. In this repo on GitHub: Settings → Pages.
 2. Under "Build and deployment", choose Source: "Deploy from a branch", Branch: `main`, folder `/ (root)`, then Save.
-3. After a minute the game is at `https://manubolgia.github.io/clack/`.
+3. After a minute the game is at `https://manubolgia.github.io/Clack/ (capital C, it must match the repo name)`.
 
 ## Install on a phone
 
