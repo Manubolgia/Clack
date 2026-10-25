@@ -197,7 +197,12 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
 // ---- tuning ----
 const N=8, COLS=['#e5533c','#2f7ee6','#26b36a','#f2b630','#9a5ce6','#1fb8c4'];
 let START_CUBES=0; const AFTERSHOCK_MIN=4; // START_CUBES: coloured cubes on the plate at the start (0 = empty, like Block Blast)
-let CHAIN_RULE='touch', MAX_CHAIN=5; // 'touch' = cubes touching a blast become magnets · 'classic' = the colour with most cubes around the hole wakes
+let CHAIN_RULE='touch', MAX_CHAIN=5;
+// CHAIN_COUNT (touch rule): what a group touching a blast needs to chain.
+// 'clump' = the clump it would blast (the group, what it pulls in and what already touches it) has AFTERSHOCK_MIN (4)+ cubes, like the paint bomb.
+// 'catch' = the original rule: it must pull BURST_MIN (3) cubes; its own cubes don't count, so a line of 4 chains when 1 cube touches the blast but not when 2 do.
+let CHAIN_COUNT='clump';
+const chainOk=(t,res,color)=>CHAIN_COUNT==='clump'?flood(t,res.clump,color).size>=AFTERSHOCK_MIN:res.caught>=BURST_MIN; // 'touch' = cubes touching a blast become magnets · 'classic' = the colour with most cubes around the hole wakes
 // knobs (see the buttons under the board)
 let NC=5, BURST_MIN=3, RANGE=99; // colours · catches needed to burst · how far a magnet reaches (99 = whole row/column)
 let INFLOW=0, RAMP_EVERY=0;      // optional: cubes that fall onto the plate before each new tray · +1 more every N trays (off by default: every cube comes from your own pieces)
@@ -251,13 +256,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,skip?0:ms));
 function canPut(g,p,r,c){return p.cells.every(([a,b])=>inb(a+r,b+c)&&g[a+r][b+c]===-1)}
 function fits(p,g=board){for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(canPut(g,p,r,c))return true;return false}
 // mags: magnet cells (already painted `color` in g). Pulls same-colour cubes in line of sight. Mutates g.
-function pull(g,mags,color,magSet){
+// block (chain waves only): cubes already locked into this wave's crater; a line stops there like at a magnet cell
+function pull(g,mags,color,magSet,block){
   const list=[],claimed=new Set();
   for(const [r,c] of mags)for(const [dr,dc] of DIRS){
     let rr=r+dr,cc=c+dc,d=1;
     while(inb(rr,cc)&&d<=RANGE){
       const k=rr*N+cc;
-      if(magSet.has(k))break;
+      if(magSet.has(k)||block&&block.has(k))break;
       const v=g[rr][cc];
       if(v===RUST)break;
       if(v>=0){if(v!==color)break;if(!claimed.has(k)){claimed.add(k);list.push({r:rr,c:cc,dr:-dr,dc:-dc,dist:Math.abs(rr-r)+Math.abs(cc-c)})}}
@@ -314,8 +320,8 @@ function touchWave(g,crater,steps){
     const color=g[k0/N|0][k0%N];if(seen.has(k0)||color<0)continue;
     const grp=new Set([k0]),st=[k0];seen.add(k0);
     while(st.length){const k=st.pop(),r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(inb(nr,nc)&&border.has(nk)&&!seen.has(nk)&&g[nr][nc]===color){seen.add(nk);grp.add(nk);st.push(nk)}}}
-    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp);
-    if(res.caught<BURST_MIN)continue;
+    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp,next);
+    if(!chainOk(t,res,color))continue;
     for(let r=0;r<N;r++)g[r]=t[r];
     steps.push({type:'wake',set:grp},{type:'pull',moves:res.moves,color});
     for(const k of flood(g,res.clump,color))next.add(k);
@@ -439,14 +445,14 @@ function dealTray0(){
 function traceWave(g,crater){ // same order and logic as touchWave
   const border=new Set();
   for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&g[nr][nc]>=0)border.add(nr*N+nc)}}
-  const seen=new Set(),out=[];
+  const seen=new Set(),out=[],next=new Set();
   for(const k0 of border){
     const color=g[k0/N|0][k0%N];if(seen.has(k0)||color<0)continue;
     const grp=new Set([k0]),st=[k0];seen.add(k0);
     while(st.length){const k=st.pop(),r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(inb(nr,nc)&&border.has(nk)&&!seen.has(nk)&&g[nr][nc]===color){seen.add(nk);grp.add(nk);st.push(nk)}}}
-    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp),ok=res.caught>=BURST_MIN;
-    out.push({grp,color,caught:res.caught,moves:res.moves,ok});
-    if(ok)for(let r=0;r<N;r++)g[r]=t[r];
+    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp,next),ok=chainOk(t,res,color),cl=CHAIN_COUNT==='clump';
+    out.push({grp,color,caught:res.caught,moves:res.moves,ok,n:cl?flood(t,res.clump,color).size:res.caught,need:cl?AFTERSHOCK_MIN:BURST_MIN});
+    if(ok){for(let r=0;r<N;r++)g[r]=t[r];for(const k of flood(g,res.clump,color))next.add(k)}
   }
   return out;
 }
@@ -595,7 +601,7 @@ async function play(steps,pc){
   const tr=traceChain(board,steps);
   const polish=async st=>{for(const k of st.set){board[k/N|0][k%N]=-1;polishFx(k)}sfx.polish();await sleep(160)};
   for(let i=0;i<steps.length;i++){const st=steps[i];
-    if(st.type==='pull'){await animMoves(st.moves,st.color,magSet);magSet=null}
+    if(st.type==='pull'){const pre=lvl>0&&magSet&&CHAIN_COUNT==='clump'?flood(board,magSet,st.color):null;await animMoves(st.moves,st.color,magSet,...(pre?[pre.size,AFTERSHOCK_MIN,pre]:[]));magSet=null}
     else if(st.type==='wake'){
       wake=st.set;wakeT0=performance.now();magSet=st.set;sfx.chime();buzz(12);
       for(const k of st.set)rings.push({x:(k%N+.5)*cs,y:((k/N|0)+.5)*cs,t0:wakeT0,dur:420,r0:cs*.35,r1:cs*1.1,col:chainCol(lvl+1),w:cs*.09});
@@ -616,20 +622,20 @@ async function waveFx(groups){
   for(const g of groups){
     for(const k of g.grp)touchGlow.set(k,{t0:now,ok:g.ok});
     if(g.ok){anyOk=true;continue}
-    if(g.caught>0){near=true;let x=0,top=N;for(const k of g.grp){x+=(k%N+.5)*cs;top=Math.min(top,k/N|0)}x/=g.grp.size;
-      counters.push({x,y:top*cs-cs*.5,n:g.caught,tp:now,color:g.color,fail:false,failAt:now+400,tEnd:0,small:true,label:'no chain'});
+    if(g.n>0&&g.n>=g.need-2){near=true;let x=0,top=N;for(const k of g.grp){x+=(k%N+.5)*cs;top=Math.min(top,k/N|0)}x/=g.grp.size;
+      counters.push({x,y:top*cs-cs*.5,n:g.n,need:g.need,tp:now,color:g.color,fail:false,failAt:now+400,tEnd:0,small:true,label:'no chain'});
       for(const m of g.moves)if(m.fr!==m.tr||m.fc!==m.tc)strain.set(m.fr*N+m.fc,{t0:now,until:now+400,dr:Math.sign(m.tr-m.fr),dc:Math.sign(m.tc-m.fc),tr:m.tr,tc:m.tc,color:g.color})}
   }
   if(!anyOk){if(near)sfx.fizzle();await sleep(near?480:220)}else await sleep(90);
 }
-async function animMoves(moves,color0,magSet){
+async function animMoves(moves,color0,magSet,n0=0,need=BURST_MIN,counted=null){ // counted: cubes already in the clump's count (4-together rule)
   if(!moves.length)return;
   const t0=performance.now();
   if(magSet){
     let x=0,y=0,top=N;for(const k of magSet){x+=(k%N+.5)*cs;y+=((k/N|0)+.5)*cs;top=Math.min(top,k/N|0)}x/=magSet.size;y/=magSet.size;
     mag={set:magSet,color:color0,t0};
     rings.push({x,y,t0,dur:600,r0:cs*.4,r1:cs*4.5,col:lighten(COLS[color0],.45),w:cs*.14});
-    counter={x,y:top*cs-cs*.62,n:0,tp:0,color:color0,tEnd:0,fail:false};counters.push(counter);
+    counter={x,y:top*cs-cs*.62,n:n0,need,tp:0,color:color0,tEnd:0,fail:false};counters.push(counter);
   }
   // every claimed cube starts straining toward the magnet; they rip loose one by one
   for(const m of moves)pending.set(m.fr*N+m.fc,{t0,dr:Math.sign(m.tr-m.fr),dc:Math.sign(m.tc-m.fc),tr:m.tr,tc:m.tc,color:m.color??color0});
@@ -642,11 +648,11 @@ async function animMoves(moves,color0,magSet){
     const f={color,fr:m.fr,fc:m.fc,tr:m.tr,tc:m.tc,dr,dc,t0:performance.now(),dur:skip||!cells?0:(J.FLY_BASE+J.FLY_PER_CELL*cells)*Math.max(J.FLY_FLOOR,Math.pow(J.FLY_SPEEDUP,i))};
     flying.push(f);
     if(cells)launchFx(m.fr,m.fc,dr,dc,color);
-    arrivals.push(sleep(f.dur).then(()=>{flying=flying.filter(x=>x!==f);board[m.tr][m.tc]=color;impact(m.tr,m.tc,i,dr,dc);if(counter&&magSet){counter.n++;counter.tp=performance.now()}}));
+    arrivals.push(sleep(f.dur).then(()=>{flying=flying.filter(x=>x!==f);board[m.tr][m.tc]=color;impact(m.tr,m.tc,i,dr,dc);if(counter&&magSet&&!(counted&&counted.has(m.fr*N+m.fc))){counter.n++;counter.tp=performance.now()}}));
   }
   await Promise.all(arrivals);
   mag=null;
-  if(counter&&magSet&&counter.n<BURST_MIN){counter.fail=true;counter.label='cools';counter.tEnd=performance.now()+550}
+  if(counter&&magSet&&counter.n<counter.need){counter.fail=true;counter.label='cools';counter.tEnd=performance.now()+550}
 }
 // one clack: rising pitch, a pop on the cube, a shake that grows with the combo
 function impact(r,c,i,dr=0,dc=0){
@@ -677,7 +683,7 @@ function blast(set,chain){
   buzz(chain>1?[35,40,60]:35);
 }
 async function burst(set,chain){
-  if(counter)counter.tEnd=performance.now()+180;
+  for(const C of counters)if(!C.tEnd&&!C.failAt)C.tEnd=performance.now()+180;
   const hold=J.FLASH_MS+40*(chain-1); // higher chains charge a little longer: the anticipation grows with the level
   charge={set,t0:performance.now(),dur:hold,lvl:chain};
   sfx.charge(hold/1000);await sleep(hold);
@@ -689,7 +695,7 @@ async function burst(set,chain){
   return set;
 }
 // the chain ends on a tally: the stamp holds with the run's total, then floats away
-function clearChain(){const now=performance.now();if(chainText){chainOut={text:chainText,lvl:chainLvl,t0:now,total:score-seqScore0};for(const p of popups)p.t0=Math.min(p.t0,now-650)}chainText='';heatT=0}
+function clearChain(){const now=performance.now();for(const C of counters)if(!C.tEnd&&!C.failAt)C.tEnd=now;if(chainText){chainOut={text:chainText,lvl:chainLvl,t0:now,total:score-seqScore0};for(const p of popups)p.t0=Math.min(p.t0,now-650)}chainText='';heatT=0}
 function checkJam(quiet){
   if(tray.some(p=>p&&fits(p)))return;
   jam=true;paintAt=paintPrev=null;
@@ -954,11 +960,11 @@ function render(now){
       else if(st.type==='pull'&&lv>0){const cc=chainCol(lv+1);ctx.strokeStyle=cc;ctx.fillStyle=cc;ctx.lineWidth=Math.max(1.5,cs*.045);
         for(const m of st.moves)if(m.fr!==m.tr||m.fc!==m.tc){const x1=(m.fc+.5)*cs,y1=(m.fr+.5)*cs,x2=(m.tc+.5)*cs,y2=(m.tr+.5)*cs,ux=Math.sign(x2-x1),uy=Math.sign(y2-y1);ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2-ux*cs*.12,y2-uy*cs*.12);ctx.stroke();arrowHead(x1,y1,x2,y2,cs*.2)}}}}
     // near misses: groups that touch a blast but can't see BURST_MIN of their colour (why the chain stops there)
-    if(drag.trace)for(const L in drag.trace)for(const f of drag.trace[L])if(!f.ok&&f.caught>0){
+    if(drag.trace)for(const L in drag.trace)for(const f of drag.trace[L])if(!f.ok&&f.n>0&&f.n>=f.need-2){
       ctx.setLineDash([cs*.07,cs*.07]);ctx.lineWidth=Math.max(1.5,cs*.04);ctx.strokeStyle='rgba(205,212,222,.65)';
       for(const k of f.grp){rr(ctx,(k%N)*cs+cs*.1,(k/N|0)*cs+cs*.1,cs*.8,cs*.8,cs*.16);ctx.stroke()}
       for(const m of f.moves)if(m.fr!==m.tr||m.fc!==m.tc){ctx.beginPath();ctx.moveTo((m.fc+.5)*cs,(m.fr+.5)*cs);ctx.lineTo((m.tc+.5)*cs,(m.tr+.5)*cs);ctx.stroke()}
-      ctx.setLineDash([]);const k0=[...f.grp][0];pill(`${f.caught}/${BURST_MIN}`,(k0%N+.5)*cs,(k0/N|0)*cs+cs*.5,cs*.22,'#cdd4de','rgba(205,212,222,.45)')}
+      ctx.setLineDash([]);const k0=[...f.grp][0];pill(`${f.n}/${f.need}`,(k0%N+.5)*cs,(k0/N|0)*cs+cs*.5,cs*.22,'#cdd4de','rgba(205,212,222,.45)')}
     ctx.restore();
     const ok=res.caught>=BURST_MIN,[r0,c0]=res.pc[0],label=`${res.caught}/${BURST_MIN}`+(res.level>1?` · CHAIN ×${res.level}`:'');
     // the outcome label sits above the plate, where it never hides a cell the preview is pointing at
@@ -985,11 +991,11 @@ function render(now){
   // the catch counter: one notch per cube caught, hot once it reaches BURST_MIN
   for(const C of counters){if(C.failAt&&!C.fail&&now>=C.failAt){C.fail=true;C.tEnd=now+450;C.tp=now}
     const out=C.tEnd?clamp01((now-C.tEnd)/220):0;if(out>=1){C.dead=true;continue}
-    const pop=1+.4*(1-clamp01((now-C.tp)/200)),hit=C.n>=BURST_MIN,R0=cs*(C.small?.36:.4)*pop*(1-out*.4),x=Math.min(Math.max(C.x,R0+2),W-R0-2),y=Math.max(C.y,R0-FM),col=C.fail?'#8a939d':hit?'#ffd23f':lighten(COLS[C.color],.4);
+    const pop=1+.4*(1-clamp01((now-C.tp)/200)),need=C.need||BURST_MIN,hit=C.n>=need,R0=cs*(C.small?.36:.4)*pop*(1-out*.4),x=Math.min(Math.max(C.x,R0+2),W-R0-2),y=Math.max(C.y,R0-FM),col=C.fail?'#8a939d':hit?'#ffd23f':lighten(COLS[C.color],.4);
     ctx.globalAlpha=1-out;ctx.beginPath();ctx.arc(x,y,R0,0,7);ctx.fillStyle='rgba(12,14,18,.9)';ctx.fill();
-    const segs=Math.max(BURST_MIN,C.n),gap=.18;for(let i=0;i<segs;i++){const a0=-Math.PI/2+i/segs*Math.PI*2+gap/2,a1=a0+Math.PI*2/segs-gap;ctx.beginPath();ctx.arc(x,y,R0-cs*.04,a0,a1);ctx.lineWidth=cs*(C.small?.055:.07);ctx.lineCap='round';ctx.strokeStyle=i<C.n?col:'rgba(255,255,255,.14)';ctx.stroke()}
+    const segs=Math.max(need,C.n),gap=.18;for(let i=0;i<segs;i++){const a0=-Math.PI/2+i/segs*Math.PI*2+gap/2,a1=a0+Math.PI*2/segs-gap;ctx.beginPath();ctx.arc(x,y,R0-cs*.04,a0,a1);ctx.lineWidth=cs*(C.small?.055:.07);ctx.lineCap='round';ctx.strokeStyle=i<C.n?col:'rgba(255,255,255,.14)';ctx.stroke()}
     if(hit&&!C.fail){ctx.shadowColor='#ffb02e';ctx.shadowBlur=cs*.4}
-    ctx.font=`900 ${R0*(C.small?.62:1.05)}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=C.fail?'#9aa3ad':hit?'#fff6d6':'#ffffff';ctx.fillText(C.small?`${C.n}/${BURST_MIN}`:C.n,x,y+R0*.05);ctx.shadowBlur=0;
+    ctx.font=`900 ${R0*(C.small?.62:1.05)}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=C.fail?'#9aa3ad':hit?'#fff6d6':'#ffffff';ctx.fillText(C.small?`${C.n}/${need}`:C.n,x,y+R0*.05);ctx.shadowBlur=0;
     if(C.fail&&C.label){ctx.font=`800 ${cs*.2}px ${FONT}`;ctx.lineJoin='round';ctx.lineWidth=cs*.07;ctx.strokeStyle='rgba(10,12,15,.9)';ctx.strokeText(C.label.toUpperCase(),x,y+R0+cs*.2);ctx.fillStyle='#b4bcc6';ctx.fillText(C.label.toUpperCase(),x,y+R0+cs*.2)}
     ctx.globalAlpha=1}
   if(counters.some(C=>C.dead))counters=counters.filter(C=>!C.dead);
@@ -1072,7 +1078,7 @@ addEventListener('resize',layout);
 // knob buttons: each row sets one rule and restarts the run
 const KNOBS=[['Reach',v=>RANGE=v,()=>RANGE,[[99,'whole line'],[3,'3'],[2,'2']]],['Catch',v=>BURST_MIN=v,()=>BURST_MIN,[[3,'3'],[4,'4']]],
   ['Colours',v=>NC=v,()=>NC,[[4,'4'],[5,'5']]],['Cubes per tray',v=>INFLOW=v,()=>INFLOW,[[0,'0'],[2,'2'],[3,'3'],[6,'6']]],['Ramp',v=>RAMP_EVERY=v,()=>RAMP_EVERY,[[0,'off'],[5,'+1 every 5 trays']]],
-  ['Chain rule',v=>CHAIN_RULE=v,()=>CHAIN_RULE,[['touch','touching cubes'],['classic','classic']]],['Max chain',v=>MAX_CHAIN=v,()=>MAX_CHAIN,[[3,'3'],[5,'5'],[9,'9']]],
+  ['Chain rule',v=>CHAIN_RULE=v,()=>CHAIN_RULE,[['touch','touching cubes'],['classic','classic']]],['Touching cubes chain when',v=>CHAIN_COUNT=v,()=>CHAIN_COUNT,[['clump','4 together (new)'],['catch','they pull 3 (original)']]],['Max chain',v=>MAX_CHAIN=v,()=>MAX_CHAIN,[[3,'3'],[5,'5'],[9,'9']]],
   ['Director',v=>DIRECTOR=v,()=>DIRECTOR,[['off','off'],['help','help'],['kill','kill'],['auto','auto']],true],['Auto ends run at',v=>TARGET=v,()=>TARGET,[[90,'90'],[120,'120'],[999,'never']],true],
   ['Pieces',v=>PIECESET=v,()=>PIECESET,[['blast','+ 1×1 and 3×3'],['clack','CLACK only']]],['Start cubes',v=>START_CUBES=v,()=>START_CUBES,[[0,'none'],[18,'18']]],
   ['Board',v=>BOARD_FX=v,()=>BOARD_FX,[['none','plain'],['pulse','magnetic pulses'],['rust','rust']]],

@@ -23,7 +23,16 @@ The settings button (top right) has sound, haptics, "sound in silent mode" (iPho
 
 It works offline after the first visit. When you change the game, bump `VERSION` in `sw.js`: installed copies check for updates whenever the app is opened or brought back to the front, and reload themselves at the next calm moment (the run resumes where it was).
 
+## Chain rule
+
+Touching cubes chain when the clump they would blast has 4+ cubes ("4 together", like the paint bomb). The original rule (they must pull 3; their own cubes don't count, so a line of 4 chains when 1 cube touches the blast but not when 2 do) is under Settings → Rules for testing → "Touching cubes chain when".
+
+## Tests
+
+`node tests/chains.js` runs 20,000 random drops under both chain rules and checks that the animation replay, the near-miss display, the blasts and the score all agree with the rules (no browser needed). `node tests/line4.js` prints the line-of-4 cases; `node tests/careless_play.js` measures how often blasts chain in random play.
+
 ## Files
 
 - `index.html`: the whole game (no dependencies)
+- `tests/`: rule tests that load the game's own rule code out of `index.html`
 - `manifest.webmanifest`, `sw.js`, `icons/`: what makes it installable and offline
