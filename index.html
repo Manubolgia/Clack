@@ -56,7 +56,7 @@ function applyLevel(){
 // 'rust' = rust creeps in from the edges onto empty cells in a fixed, previewed order; blasts polish away rust they touch
 let BOARD_FX='rust', RUST_RATE=1, RUST_MAX=36, plannedPulse=null, plannedRust=[], lastFx={moves:[],rust:[]};
 const RUST=-2;
-let DIRECTOR='auto', TARGET=120;  // 'off' raw random trays · 'help' best trays, cubes land where they hurt least · 'kill' bad trays, cubes land where they hurt · 'auto' runs the rhythm until TARGET placements, then kills
+let DIRECTOR='auto', TARGET=999;  // 'off' raw random trays · 'help' best trays, cubes land where they hurt least · 'kill' bad trays, cubes land where they hurt · 'auto' runs the rhythm until TARGET placements, then kills
 // auto rhythm: calm → charge (falling cubes take the colour that lines up with their row and column: the plate gets tight but loaded)
 // → rescue (once TIGHT cubes are down, the tray holds a piece that can clear most of the plate) → calm for RESCUE_COOLDOWN trays
 let RHYTHM=true, CALM_START=12, TIGHT=34, RESCUE_COOLDOWN=3, KILL_PICK=6, KILL_STYLE='none', killStart=-1;
