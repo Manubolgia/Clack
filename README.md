@@ -33,7 +33,7 @@ Touching cubes chain when the clump they would blast has 4+ cubes ("4 together",
 
 ## Play data (opt-in)
 
-The app can send anonymous play data (each drop, its board and tray, what the player hovered over, and run results) to a Cloudflare Worker for tuning the director; see `telemetry/README.md` in the Clank repo. It stays off while `TLM_URL` is empty, and once it is set the title screen asks first. `?telemetry=local` sends to a Worker running on the same machine, for testing.
+The app can send anonymous play data (each drop, its board and tray, what the player hovered over, and run results) to a Cloudflare Worker for tuning the director; see `telemetry/README.md` in the Clank repo. The title screen asks first, and Settings → "Share play data" changes the answer (switching it off also deletes anything not yet sent). `?telemetry=local` sends to a Worker running on the same machine, for testing.
 
 ## Tests
 

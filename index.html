@@ -1150,7 +1150,7 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
 const APP_VERSION=8;
 const CHANGES=[
-  [8,'Rust polish scores',['The score now adds 5 points for each rust cell a blast polishes away. It was always in the rules but never shown.']],
+  [8,'Rust polish scores, play data',['The score now adds 5 points for each rust cell a blast polishes away. It was always in the rules but never shown.','The title screen asks once whether you want to share anonymous play data (your moves and scores, nothing personal) to help tune the game. You can change your answer in Settings.']],
   [7,'Rule sets for testing',['Settings → Rules for testing has a "Rule set" row to try the rule ideas being compared (C5 is the game you know). A test link can also pick one.','Groundwork for sharing anonymous play data. It stays off, and the game will ask first once it is switched on.']],
   [6,'Board and sound fixes',['Fixed the board sometimes looking squashed (not square) after the app reopened or updated itself; touches also land in the right cells again.','Sound rebuilt to survive iPhone quirks: if iOS leaves the sound stuck after the app was in the background, the next tap restarts it.','Settings → Feel has a "Test sound" button and a line showing the sound status.','This "What\'s new" card, and the full history in Settings.']],
   [5,'Chains that make sense',['New chain rule, "4 together": cubes touching a blast chain when the clump they would blast has 4 or more cubes. Before, a line of 4 chained when 1 cube touched the blast but not when 2 did. The old rule is in Settings → Rules for testing.','Fixed a rare bug where a chain could blast an empty cell and score a cube twice.','Fixed the catch counter sometimes staying stuck on screen after a chain.']],
@@ -1208,9 +1208,9 @@ addEventListener('pagehide',()=>{save();tlmFlush(true)});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){save();tlmFlush(true)}});
 
 // ---- play data (opt-in): moves and run results for tuning the director; no personal data ----
-// Batches go to TLM_URL (the Worker in the Clank repo, telemetry/) and wait on the device while offline. While TLM_URL is
+// Batches go to TLM_URL (the Worker in the Clank repo, telemetry/) and wait on the device while offline. With TLM_URL
 // empty nothing is asked, collected or sent. ?telemetry=local sends to a Worker running on this machine (wrangler dev).
-const TLM_URL='';
+const TLM_URL='https://clack-telemetry.manuobelleiro00.workers.dev/e';
 const tlmUrl=()=>new URLSearchParams(location.search).get('telemetry')==='local'?'http://127.0.0.1:8787/e':TLM_URL;
 let tlmOn=LS.get('tlm',null),tlmQ=LS.get('tq',[]),tlmRun=null,tlmDec={t0:0,t1:0,drags:[]},tlmBusy=false,SHAPE_ID=null;
 const tlmId=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
