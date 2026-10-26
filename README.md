@@ -27,9 +27,17 @@ It works offline after the first visit. When you change the game, bump `VERSION`
 
 Touching cubes chain when the clump they would blast has 4+ cubes ("4 together", like the paint bomb). The original rule (they must pull 3; their own cubes don't count, so a line of 4 chains when 1 cube touches the blast but not when 2 do) is under Settings → Rules for testing → "Touching cubes chain when".
 
+## Rule sets for testing
+
+`RULESETS` in `index.html` names the rule sets being compared in the Clank repo's rules workshop: `SC` (Stable C exactly as in the fixtures), `S` (Stable C with the crater fix), `C1`, `C2`, `C4`, `C5` (this app's default, "4 together"), `C5C6` and `C7`. A link like `https://manubolgia.github.io/Clack/?rules=C7` plays that set and the app remembers it, so an installed copy keeps it; `?rules=default` goes back. While a link sets the rules, Settings hides "Rules for testing" so blind testers can't see the variant; add `&debug` to show it. A saved run only resumes under the rule set it was played with.
+
+## Play data (opt-in)
+
+The app can send anonymous play data (each drop, its board and tray, what the player hovered over, and run results) to a Cloudflare Worker for tuning the director; see `telemetry/README.md` in the Clank repo. It stays off while `TLM_URL` is empty, and once it is set the title screen asks first. `?telemetry=local` sends to a Worker running on the same machine, for testing.
+
 ## Tests
 
-`node tests/chains.js` runs 20,000 random drops under both chain rules and checks that the animation replay, the near-miss display, the blasts and the score all agree with the rules (no browser needed). `node tests/line4.js` prints the line-of-4 cases; `node tests/careless_play.js` measures how often blasts chain in random play.
+`node tests/chains.js` runs 20,000 random drops under both chain rules and checks that the animation replay, the near-miss display, the blasts and the score all agree with the rules (no browser needed). `node tests/variants.js` checks every rule-set switch; `node tests/line4.js` prints the line-of-4 cases; `node tests/careless_play.js` measures how often blasts chain in random play.
 
 ## Files
 

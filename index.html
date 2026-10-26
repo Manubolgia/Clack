@@ -119,6 +119,8 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
 .how div{display:grid;grid-template-columns:30px 1fr;gap:12px;align-items:center;font-size:13.5px;line-height:1.4;color:#cfd5dc}
 .how i{width:30px;height:30px;border-radius:9px;font-size:13px}
 .card .btn{width:100%;flex:none;height:56px;font-size:17px;animation:fadein .5s 1.5s both}
+.tlmask{margin-top:16px;font-size:12px;line-height:1.45;color:var(--ink2);animation:fadein .5s 1.5s both}
+.tlmask button{margin:8px 4px 0;padding:7px 18px;border-radius:10px;border:0;font-size:13px;font-weight:700;background:rgba(255,255,255,.09);color:var(--ink)}
 .bestt{margin-top:14px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3);animation:fadein .5s 1.5s both}
 @keyframes fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .news ul,#hist ul{text-align:left;margin:0 0 22px;padding-left:18px;display:grid;gap:9px;font-size:13.5px;line-height:1.4;color:#cfd5dc}
@@ -162,7 +164,7 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
   <div class="hd"><b>Settings</b><button id="setclose" class="btn">Done</button></div>
   <div class="scroll">
     <h4>Feel</h4>
-    <div class="tgs"><button class="tg" id="tsnd">Sound</button><button class="tg" id="thap">Haptics</button><button class="tg" id="tsym">Colour symbols</button><button class="tg" id="tsil">Sound in silent mode</button></div>
+    <div class="tgs"><button class="tg" id="tsnd">Sound</button><button class="tg" id="thap">Haptics</button><button class="tg" id="tsym">Colour symbols</button><button class="tg" id="tsil">Sound in silent mode</button><button class="tg" id="ttlm">Share play data</button></div>
     <div class="row" style="margin-top:8px;align-items:center"><button class="btn ghost" id="stest" style="height:36px;font-size:13px;flex:none;padding:0 14px">Test sound</button><div id="ainfo" style="font-size:11px;color:var(--ink3);line-height:1.35"></div></div>
     <h4>Juice tuning</h4>
     <div id="sliders"></div>
@@ -188,6 +190,7 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
     </div>
     <button id="play" class="btn hot">Play</button>
     <div class="bestt" id="tbest"></div>
+    <div class="tlmask" id="tlmask" hidden>Share anonymous play data (moves and scores, nothing personal) to help tune the game?<br><button id="tlmyes">Yes</button><button id="tlmno">No</button></div>
   </div>
 </div>
 
@@ -603,17 +606,18 @@ function recordRun(){
   LS.set('last',Date.now());
 }
 function newRun(){
-  recordRun();started=true;
+  tlmEnd();recordRun();started=true;
   if(board){const now=performance.now(),cells=[];for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(board[r][c]!==-1)cells.push([r,c,board[r][c]]);if(cells.length)wipe={t0:now,cells}}
   board=empty();let k=0;while(k<START_CUBES){const r=rnd(N),c=rnd(N);if(board[r][c]<0){board[r][c]=rnd(NC);k++}}
   score=0;placements=0;trays=0;cooldown=0;killStart=-1;level=-1;applyLevel();banner='';runStart=Date.now();undoSnap=null;undoUsed=false;contUsed=false;jam=false;paintAt=paintPrev=null;
   stats={blasted:0,maxChain:0,newBest:false};runBest0=LS.get('best',0);dispScore=0;
   flying=[];pending.clear();rustGrow.clear();strain.clear();touchGlow.clear();counter=null;counters=[];mag=null;charge=null;chainText='';heatT=0;
-  tray=dealTray();planBoard();showJam(false);dealFx();hud();save();
+  tray=dealTray();planBoard();showJam(false);dealFx();tlmStart();hud();save();
   log(`Drag a piece onto the plate. Catch ${BURST_MIN} of its colour to blast.`);
 }
 async function commit(slot,ar,ac){
   const p=tray[slot],res=simulate(board,p,ar,ac);if(!res)return;
+  tlmPlace(slot,ar,ac,res);
   busy=true;skip=false;combo=0;seqScore0=score;
   undoSnap={board:copy(board),tray:tray.slice(),score,placements};
   tray[slot]=null;placements++;applyLevel();
@@ -623,7 +627,7 @@ async function commit(slot,ar,ac){
   log(`Caught ${res.n}/${BURST_MIN}`+(res.n<BURST_MIN?' → piece cools into cubes':res.level>1?` → BURST → CHAIN ×${res.level}`:' → BURST'));
   await play(res.steps,res.pc);board=res.g;
   if(tray.every(x=>!x)){await inflow();tray=dealTray();planBoard();dealFx()}
-  busy=false;skip=false;clearChain();hud();checkJam();save();tryReload();
+  busy=false;skip=false;clearChain();hud();checkJam();save();tlmReady();if(tlmQ.length>=30)tlmFlush();tryReload();
 }
 // filings rain onto random empty cells before each new tray
 async function inflow(){
@@ -761,7 +765,7 @@ function clearChain(){const now=performance.now();for(const C of counters)if(!C.
 function checkJam(quiet){
   if(tray.some(p=>p&&fits(p)))return;
   jam=true;paintAt=paintPrev=null;
-  if(!quiet){jamT0=performance.now();sfx.jam();buzz([20,50,30])}
+  if(!quiet){jamT0=performance.now();sfx.jam();buzz([20,50,30]);tlm('j',{i:placements,score,board:tlmBoard(board),tray:tlmTray(tray)})}
   const best=LS.get('best',0);
   $('pinfo').textContent=`${score.toLocaleString()} · ${best?Math.round(score/best*100):100}% of best`;
   $('tinfo').textContent=contUsed?'Already used this run.':'Tap any cube on the plate to preview it, free. Its 8 neighbours take its colour; a clump of 4+ blasts.';
@@ -1088,6 +1092,7 @@ function move(x,y){
   drag.px=x-w*cs/2;drag.py=y-h*cs/2-cs*1.4;
   drag.ar=Math.round(drag.py/cs);drag.ac=Math.round(drag.px/cs);
   const prev=drag.res;drag.res=simulate(board,p,drag.ar,drag.ac);
+  if(drag.res&&drag.h){const k=drag.ar*N+drag.ac;if(drag.h[drag.h.length-1]!==k&&drag.h.length<64)drag.h.push(k)}
   if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){const b0=copy(board);for(const [r,c] of drag.res.pc)b0[r][c]=p.color;drag.trace=traceChain(b0,drag.res.steps)}else if(!drag.res)drag.trace=null;
   if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){buzz(3);if(drag.res.n>=BURST_MIN&&(!prev||prev.n<BURST_MIN))tone(660+drag.res.level*110,.05,'triangle',.03)}
 }
@@ -1096,15 +1101,16 @@ cv.addEventListener('pointerdown',e=>{
   const {x,y}=pos(e);
   if(jam){if(!contUsed&&y>=0&&y<W&&x>=0&&x<W){const r=Math.floor(y/cs),c=Math.floor(x/cs);if(inb(r,c)&&board[r][c]>=0){paintAt={r,c};paintPrev=paintPreview(r,c);const P=paintPrev;tone(700,.05,'triangle',.04);buzz(5);
     $('tinfo').innerHTML=`${P.painted.size} cubes turn this colour · `+(P.clump.size?`clump of ${P.clump.size} blasts${P.chains>1?' + chain':''}`:'no blast (needs 4+ touching)')+` → tray `+(P.ok?'<span class="ok">fits ✓</span>':'<span class="no">still jammed ✗</span>');$('apply').disabled=false}}return}
-  if(y>trayY-cs*.4&&y<trayY+TH+cs*.8&&x>-FM&&x<W+FM){const s=Math.max(0,Math.min(2,Math.floor(x/(W/3))));if(tray[s]){returning=null;drag={slot:s,t0:performance.now()};cv.setPointerCapture(e.pointerId);sfx.pick();buzz(5);move(x,y)}}
+  if(y>trayY-cs*.4&&y<trayY+TH+cs*.8&&x>-FM&&x<W+FM){const s=Math.max(0,Math.min(2,Math.floor(x/(W/3))));if(tray[s]){returning=null;drag={slot:s,t0:performance.now(),h:[]};if(!tlmDec.t1)tlmDec.t1=drag.t0;cv.setPointerCapture(e.pointerId);sfx.pick();buzz(5);move(x,y)}}
 });
 cv.addEventListener('pointermove',e=>{if(drag){const {x,y}=pos(e);move(x,y)}});
-function release(){if(!drag)return;const d=drag;drag=null;if(d.res)commit(d.slot,d.ar,d.ac);else{const p=tray[d.slot],h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1;returning={slot:d.slot,x:d.px+w*cs/2,y:d.py+h*cs/2,t0:performance.now()};sfx.deny()}}
+function release(){if(!drag)return;const d=drag;drag=null;if(tlmDec.drags.length<30)tlmDec.drags.push({s:d.slot,ms:Math.round(performance.now()-d.t0),h:d.h||[],ok:d.res?1:0});if(d.res)commit(d.slot,d.ar,d.ac);else{const p=tray[d.slot],h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1;returning={slot:d.slot,x:d.px+w*cs/2,y:d.py+h*cs/2,t0:performance.now()};sfx.deny()}}
 cv.addEventListener('pointerup',release);cv.addEventListener('pointercancel',()=>{if(drag){drag.res=null;release()}});
 function doUndo(){
   if(undoUsed||!undoSnap||busy)return;
+  tlm('u',{i:placements});
   board=undoSnap.board;tray=undoSnap.tray;score=undoSnap.score;placements=undoSnap.placements;dispScore=score;
-  undoUsed=true;jam=false;paintAt=paintPrev=null;level=-1;applyLevel();banner='';showJam(false);dealFx();toast('Undo used');log('Undo used (1 per run).');hud();save();
+  undoUsed=true;jam=false;paintAt=paintPrev=null;level=-1;applyLevel();banner='';showJam(false);dealFx();toast('Undo used');log('Undo used (1 per run).');hud();save();tlmReady();
 }
 $('undo').onclick=doUndo;$('jundo').onclick=doUndo;
 // paint bomb (the continue): the 8 cubes around the tapped one take its colour, and a touching clump of 4+ bursts and can chain
@@ -1119,12 +1125,12 @@ function paintSim(b,r,c){
 function paintPreview(r,c){const s=paintSim(board,r,c);return {...s,chains:s.level,ok:tray.some(p=>p&&fits(p,s.after))}}
 $('apply').onclick=async()=>{
   if(contUsed||!paintPrev||busy)return;
-  const {r,c}=paintAt,k=board[r][c],ps=paintSim(board,r,c);contUsed=true;jam=false;paintAt=paintPrev=null;showJam(false);busy=true;seqScore0=score;paintT0=performance.now();
+  const {r,c}=paintAt,k=board[r][c],ps=paintSim(board,r,c);tlm('b',{i:placements,r,c,lvl:ps.level,ok:tray.some(p=>p&&fits(p,ps.after))?1:0});contUsed=true;jam=false;paintAt=paintPrev=null;showJam(false);busy=true;seqScore0=score;paintT0=performance.now();
   const [px,py]=cellC(r*N+c),U=cs/45*60;rings.push({x:px,y:py,t0:performance.now(),dur:500,r0:cs*.3,r1:cs*2.2,col:lighten(COLS[k],.3),w:cs*.2});
   for(let n=0;n<28;n++){const a=Math.random()*6.28,s=(1.5+Math.random()*4)*U;spark(px,py,Math.cos(a)*s,Math.sin(a)*s-U,lighten(COLS[k],.2),.5,1.3)}sfx.splat();buzz(30);
   let i=0;for(const [dr,dc] of AROUND){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&board[nr][nc]>=0&&board[nr][nc]!==k){board[nr][nc]=k;flash=new Set([nr*N+nc]);impact(nr,nc,i++);await sleep(Math.max(J.GAP_MIN,90*Math.pow(J.GAP_SPEEDUP,i)))}}
   flash=null;combo=0;await play(ps.steps);board=ps.after;
-  toast('Paint bomb used');log('Continue used (paint bomb).');busy=false;skip=false;clearChain();hud();checkJam();save();
+  toast('Paint bomb used');log('Continue used (paint bomb).');busy=false;skip=false;clearChain();hud();checkJam();save();tlmReady();
 };
 $('restart').onclick=()=>{if(busy)return;showResults()};
 function showResults(){
@@ -1142,8 +1148,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=6;
+const APP_VERSION=7;
 const CHANGES=[
+  [7,'Rule sets for testing',['Settings → Rules for testing has a "Rule set" row to try the rule ideas being compared (C5 is the game you know). A test link can also pick one.','Groundwork for sharing anonymous play data. It stays off, and the game will ask first once it is switched on.']],
   [6,'Board and sound fixes',['Fixed the board sometimes looking squashed (not square) after the app reopened or updated itself; touches also land in the right cells again.','Sound rebuilt to survive iPhone quirks: if iOS leaves the sound stuck after the app was in the background, the next tap restarts it.','Settings → Feel has a "Test sound" button and a line showing the sound status.','This "What\'s new" card, and the full history in Settings.']],
   [5,'Chains that make sense',['New chain rule, "4 together": cubes touching a blast chain when the clump they would blast has 4 or more cubes. Before, a line of 4 chained when 1 cube touched the blast but not when 2 did. The old rule is in Settings → Rules for testing.','Fixed a rare bug where a chain could blast an empty cell and score a cube twice.','Fixed the catch counter sometimes staying stuck on screen after a chain.']],
   [4,'Readable, louder chains',['After a blast, the groups touching it light up; the ones that can\'t chain show "n/3 · no chain", in the preview and in the animation.','Chains escalate per level: hit-stop, zoom, a ×2…×5 ladder, rising notes and an end total.','Sound fix for phones, and "Sound in silent mode" for iPhone.']],
@@ -1177,7 +1184,7 @@ function sliders(){$('sliders').innerHTML=SLIDERS.map(([k,l,u,mn,mx,st])=>`<labe
 $('sliders').oninput=e=>{const t=e.target,k=t.dataset.j;if(!k)return;J[k]=+t.value;t.nextElementSibling.textContent=fmtJ(J[k],t.dataset.u);LS.set('juice',J)};
 $('jreset').onclick=()=>{J={...JUICE_DEF};LS.set('juice',J);sliders()};
 $('newrun').onclick=()=>{if(busy)return;closeSet();newRun()};
-function toggles(){$('tsil').setAttribute('aria-pressed',SIL.on);$('tsil').style.display=navigator.audioSession?'':'none';$('tsnd').setAttribute('aria-pressed',SND.on);$('thap').setAttribute('aria-pressed',HAP.on);$('tsym').setAttribute('aria-pressed',SYM)}
+function toggles(){$('tsil').setAttribute('aria-pressed',SIL.on);$('tsil').style.display=navigator.audioSession?'':'none';$('tsnd').setAttribute('aria-pressed',SND.on);$('thap').setAttribute('aria-pressed',HAP.on);$('tsym').setAttribute('aria-pressed',SYM);tlmUi()}
 $('tsnd').onclick=()=>{SND.on=!SND.on;LS.set('snd',SND.on);toggles();if(SND.on){unlockAudio();tone(660,.08,'triangle',.05)}audioInfo()};
 $('stest').onclick=()=>{unlockAudio();[523,659,784].forEach((f,i)=>tone(f,.18,'triangle',.07,0,i*.09));setTimeout(audioInfo,300)};
 $('tsil').onclick=()=>{SIL.on=!SIL.on;LS.set('sil',SIL.on);toggles();acBad=true;unlockAudio();tone(660,.08,'triangle',.05);setTimeout(audioInfo,300)};
@@ -1188,15 +1195,52 @@ $('gear').onclick=()=>{hud();toggles();audioInfo();$('jam').classList.remove('on
 $('setclose').onclick=closeSet;
 
 // ---- save and resume: the run survives closing the app and updates ----
-function save(){if(!board||busy)return;LS.set('run',{v:1,rules:rulesName(),board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
+function save(){if(!board||busy)return;LS.set('run',{v:1,rules:rulesName(),tlm:tlmRun,board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
 function load(){
   const s=LS.get('run',null);if(!s||s.v!==1||!Array.isArray(s.board)||s.board.length!==N||!Array.isArray(s.tray))return false;
   if((s.rules||'C5')!==rulesName())return false;
   ({board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0}=s);
-  stats=stats||{blasted:0,maxChain:0,newBest:false};plannedRust=plannedRust||[];started=true;dispScore=score;return true;
+  stats=stats||{blasted:0,maxChain:0,newBest:false};plannedRust=plannedRust||[];started=true;dispScore=score;
+  tlmRun=s.tlm||{id:tlmId(),resumes:0};tlmRun.resumes++;tlmReady();return true;
 }
-addEventListener('pagehide',save);
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')save()});
+addEventListener('pagehide',()=>{save();tlmFlush(true)});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){save();tlmFlush(true)}});
+
+// ---- play data (opt-in): moves and run results for tuning the director; no personal data ----
+// Batches go to TLM_URL (the Worker in the Clank repo, telemetry/) and wait on the device while offline. While TLM_URL is
+// empty nothing is asked, collected or sent. ?telemetry=local sends to a Worker running on this machine (wrangler dev).
+const TLM_URL='';
+const tlmUrl=()=>new URLSearchParams(location.search).get('telemetry')==='local'?'http://127.0.0.1:8787/e':TLM_URL;
+let tlmOn=LS.get('tlm',null),tlmQ=LS.get('tq',[]),tlmRun=null,tlmDec={t0:0,t1:0,drags:[]},tlmBusy=false,SHAPE_ID=null;
+const tlmId=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+function tlmDev(){let d=LS.get('dev','');if(!d){d=crypto.randomUUID?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');LS.set('dev',d)}return d}
+const tlmBoard=g=>g.map(r=>r.map(v=>v===-1?'.':v===RUST?'r':String(v)).join('')).join('');
+const tlmTray=t=>{if(!SHAPE_ID)SHAPE_ID=new Map(SHAPES_BLAST.map((sh,i)=>[JSON.stringify(sh),i]));return t.map(p=>p?[SHAPE_ID.get(JSON.stringify(p.cells))??-1,p.color]:null)}; // shape index in SHAPES_BLAST, colour
+const tlmReady=()=>{tlmDec={t0:performance.now(),t1:0,drags:[]}};
+function tlm(t,data){
+  if(!tlmOn||!tlmUrl())return;
+  const seq=LS.get('tseq',0)+1;LS.set('tseq',seq);
+  tlmQ.push({t,seq,run:tlmRun?tlmRun.id:null,...data});if(tlmQ.length>1500)tlmQ.splice(0,tlmQ.length-1500);LS.set('tq',tlmQ);
+}
+// a batch leaves the queue once the Worker has it; the Worker ignores a (device, seq) it already stored, so re-sending is safe
+function tlmFlush(beacon){
+  const url=tlmUrl();if(!tlmOn||!url||!tlmQ.length||tlmBusy)return;
+  const batch=tlmQ.slice(0,200),last=batch[batch.length-1].seq,body=JSON.stringify({dev:tlmDev(),v:APP_VERSION,events:batch});
+  const done=()=>{tlmQ=tlmQ.filter(e=>e.seq>last);LS.set('tq',tlmQ)};
+  if(beacon){if(navigator.sendBeacon&&navigator.sendBeacon(url,body))done();return}
+  tlmBusy=true;fetch(url,{method:'POST',body,keepalive:body.length<60000}).then(r=>{tlmBusy=false;if(r.ok){done();if(tlmQ.length)tlmFlush()}}).catch(()=>{tlmBusy=false});
+}
+function tlmS(){tlm('s',{rules:rulesName(),sw:ruleValues(),pieces:PIECESET,blind:LS.get('rules','')?1:0,runs:LS.get('runs',0),best:LS.get('best',0),
+  dir:{DIRECTOR,KILL_STYLE,RHYTHM,CALM_START,TIGHT,RESCUE_COOLDOWN,DRIFT_START,DRIFT_LEN,DRIFT_SLOPE,DRIFT_CAP,RUST_CHARGE,RUST_MAX,TARGET}})}
+function tlmStart(){tlmRun={id:tlmId(),resumes:0};tlmS();tlmReady();tlmFlush()}
+function tlmEnd(){if(!tlmRun||!placements)return;tlm('e',{len:placements,score,best:LS.get('best',0),end:jam?'jam':'quit',paint:contUsed?1:0,undo:undoUsed?1:0,resumes:tlmRun.resumes,secs:Math.round((Date.now()-runStart)/1000)});tlmFlush()}
+// one drop: the board and tray it was made from, what the player picked up and hovered first, and what happened
+function tlmPlace(slot,r,c,res){tlm('p',{i:placements+1,tr:trays,rule,k:+driftK().toFixed(3),rules:rulesName(),board:tlmBoard(board),tray:tlmTray(tray),slot,r,c,
+  think:tlmDec.t1?Math.round(tlmDec.t1-tlmDec.t0):null,ms:Math.round(performance.now()-tlmDec.t0),drags:tlmDec.drags,caught:res.caught,n:res.n,lvl:res.level,gain:res.gain})}
+function tlmUi(){const can=!!tlmUrl();$('tlmask').hidden=!can||tlmOn!==null;$('ttlm').style.display=can?'':'none';$('ttlm').setAttribute('aria-pressed',!!tlmOn)}
+$('tlmyes').onclick=()=>{tlmOn=true;LS.set('tlm',true);tlmUi();if(placements===0)tlmS();tlmFlush()};
+$('tlmno').onclick=()=>{tlmOn=false;LS.set('tlm',false);tlmUi()};
+$('ttlm').onclick=()=>{tlmOn=!tlmOn;LS.set('tlm',tlmOn);if(!tlmOn){tlmQ=[];LS.set('tq',[])}tlmUi()};
 
 // ---- frame loop: time-based so it feels the same at 60 and 120 Hz ----
 let lastT=0;
@@ -1224,11 +1268,12 @@ $('rulesbox').hidden=!!LS.get('rules','')&&!DEBUG;
 document.querySelectorAll('[data-burst]').forEach(e=>e.textContent=BURST_MIN);
 knobs();sliders();toggles();layout();
 if(load()){$('score').textContent=score.toLocaleString();hud();trayT0=performance.now();if(!tray.some(p=>p&&fits(p)))checkJam(true);log('Run resumed.')}else newRun();
+tlmFlush();
 requestAnimationFrame(frame);
 {let skipTitle=false;try{skipTitle=sessionStorage.getItem('clack_skipTitle')==='1';sessionStorage.removeItem('clack_skipTitle')}catch(e){}
   const best=LS.get('best',0);$('tbest').textContent=best?`Best ${best.toLocaleString()}`:'';$('play').textContent=placements>0?'Continue':'Play';
   if(skipTitle)$('title').classList.add('hidden');
-  $('play').onclick=()=>{unlockAudio();$('title').classList.add('hidden');dealFx();buzz(10)};}
+  $('play').onclick=()=>{unlockAudio();$('title').classList.add('hidden');dealFx();buzz(10);tlmReady()};}
 
 // ---- offline + installable, and installed copies update themselves ----
 // a new version activates in the background; the page reloads at the next calm moment and the saved run resumes
