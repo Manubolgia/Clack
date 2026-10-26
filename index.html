@@ -390,12 +390,13 @@ function clumpWave(g,crater,steps){
     if(cl.size>=CLUMP_MIN){steps.push({type:'wake',set:cl});for(const x of cl)next.add(x)}}}
   return next.size?next:null;
 }
+// what a drop counts toward BURST_MIN: its catch, or under DROP_COUNT 'clump' the cubes joined to the piece, if more. res: place()'s result
+const dropN=(res,p)=>DROP_COUNT==='clump'?Math.max(res.caught,flood(res.g,new Set(res.pc.map(([r,c])=>r*N+c)),p.color).size-res.pc.length):res.caught;
 // a whole placement: the magnet pull, then the blast and its chain
 function simulate(b,p,ar,ac){
   const res=place(b,p,ar,ac);if(!res)return null;
   const steps=[{type:'pull',moves:res.moves,color:p.color}];let gain=0,level=0;
-  // n: what the drop counts toward BURST_MIN (its catch, or under DROP_COUNT 'clump' the cubes joined to the piece, if more)
-  const n=DROP_COUNT==='clump'?Math.max(res.caught,flood(res.g,new Set(res.pc.map(([r,c])=>r*N+c)),p.color).size-res.pc.length):res.caught;
+  const n=dropN(res,p);
   if(n>=BURST_MIN)({gain,level}=runChain(res.g,flood(res.g,res.clump,p.color),steps));
   return {g:res.g,pc:res.pc,moves:res.moves,caught:res.caught,n,steps,gain,level};
 }
@@ -450,8 +451,8 @@ function boardFx(){
 }
 // the colour this shape would catch the least with here
 function dudColour(p){let best=p.color,bc=1e9;for(let k=0;k<NC;k++){const c=bestCatch(board,{cells:p.cells,color:k});if(c<bc){bc=c;best=k}}return best}
-// most cubes this piece can catch in one placement, -1 if it does not fit
-function bestCatch(g,p){let best=-1;for(let r=0;r<N;r++)for(let c=0;c<N;c++){const x=place(g,p,r,c);if(x)best=Math.max(best,x.caught)}return best}
+// most cubes this piece can catch in one placement (what the drop counts, so a C6 clump counts), -1 if it does not fit
+function bestCatch(g,p){let best=-1;for(let r=0;r<N;r++)for(let c=0;c<N;c++){const x=place(g,p,r,c);if(x)best=Math.max(best,dropN(x,p))}return best}
 // most cubes one placement of this piece can clear (blast + chain), -1 if it does not fit
 function bestClear(g,p){const f=filledN(g)+p.cells.length;let best=-1;for(let r=0;r<N;r++)for(let c=0;c<N;c++){const x=simulate(g,p,r,c);if(x)best=Math.max(best,f-filledN(x.g))}return best}
 function randPiece(big=false){const S=curShapes();let s;do{s=S[rnd(S.length)]}while(big?s.length<4&&Math.random()<0.5:s.length>4&&Math.random()<0.6);return {cells:s,color:rnd(NC)}}

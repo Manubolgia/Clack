@@ -36,6 +36,11 @@ function redStack(G,n=3){const b=G.empty();for(let r=5;r<5+n;r++)b[r][2]=0;retur
   check('C6: pull 1 + clump of 4 blasts under C5C6 only',a.level===0&&a.n===1&&c.caught===1&&c.n===3&&c.level===1&&c.gain===40,`C5 n ${a.n} level ${a.level} · C5C6 n ${c.n} level ${c.level} gain ${c.gain}`);
   b[3][5]=-1;const d=G.simulate(b,one,4,4);check('C6: a clump of 3 still cools',d.level===0&&d.n===1);
 }
+// C6: the director's best catch counts what the drop counts, so its duds can't blast through the clump route
+{const G=load();const b=G.empty();b[3][3]=0;b[3][4]=0;b[4][3]=0;b[4][4]=0; // a red 2×2: one red cube pulls at most 2, but joins 4
+  G.get('applyRules')('C5');const a=G.get('bestCatch')(b,one);G.get('applyRules')('C5C6');const c=G.get('bestCatch')(b,one);
+  check('C6: best catch is 2 under C5 and 4 under C5C6 (the clump route)',a===2&&c===4,`C5 ${a} · C5C6 ${c}`);
+}
 // CRATER_BLOCK: with it off, a later group can pull a cube out of the crater an earlier group formed (the crater then holds an empty cell)
 {const SH=[[[0,0]],[[0,0],[0,1]],[[0,0],[1,0]],[[0,0],[0,1],[0,2]],[[0,0],[1,0],[2,0]],[[0,0],[0,1],[1,0]],[[0,0],[0,1],[1,0],[1,1]],[[0,1],[1,0],[1,1],[1,2]],[[0,0],[1,0],[2,0],[2,1]]];
   const on=load(),off=load();off.set('CRATER_BLOCK',false);const R=rngf(11);let stolen=0,withBlock=0,tried=0;
