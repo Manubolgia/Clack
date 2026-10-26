@@ -65,6 +65,13 @@ function redStack(G,n=3){const b=G.empty();for(let r=5;r<5+n;r++)b[r][2]=0;retur
   check('DRIFT_CAP 0 deals exactly the no-drift trays',same===20,`${same}/20`);
   check('DRIFT_SLOPE 10, DRIFT_CAP 1: every piece takes its dud colour',dud===20,`${dud}/20`);
 }
+// plates (plan/02 §2.5a): a plate sets its rule set and director; the next plate resets every knob it doesn't set
+{const G=load(),P=G.get('PLATES');P.T={rules:'C7',dir:{KILL_STYLE:'drift',TIGHT:30,DRIFT_START:55,RUST_CUBES:true}};P.U={rules:'S',dir:{KILL_STYLE:'drift'}};
+  const v=()=>['BURST_MIN','CHAIN_COUNT','KILL_STYLE','TIGHT','DRIFT_START','CALM_START','RUST_CUBES'].map(k=>G.get(k)).join();
+  const t=G.get('applyPlate')('T')&&v(),u=G.get('applyPlate')('U')&&v();
+  check('plates: a plate applies its rules and director, the next one resets the rest',t==='4,clump,drift,30,55,12,true'&&u==='3,catch,drift,34,40,12,false'&&G.get('applyPlate')('nope')===false,`T ${t} · U ${u}`);
+  delete P.T;delete P.U;
+}
 // rust variants (plan/02 §2.6): R2 RUST_CALM, R4 RUST_OPEN, R5 RUST_SPREAD
 {const G=load();const plan=(placements,cooldown,cfg={})=>{G.set('board',G.empty());G.set('placements',placements);G.set('cooldown',cooldown);
     G.set('RUST_CALM',0);G.set('RUST_OPEN',0);for(const [k,v] of Object.entries(cfg))G.set(k,v);return G.get('rustAmount()')};

@@ -139,6 +139,18 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
 #rstats span{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 #results.hidden .card{transform:translateY(20px) scale(.97)}
 #results .card{transition:transform .45s cubic-bezier(.2,.9,.3,1.2)}
+#quiz .card{max-width:380px}#quiz h2{margin:0 0 10px;font-size:13px;letter-spacing:.3em;text-transform:uppercase;color:var(--ink2);font-weight:800}
+#quiz p{font-size:14px;line-height:1.45;color:#cfd5dc;margin:0 0 14px;text-align:left}#quiz ol{text-align:left;font-size:13.5px;line-height:1.45;color:#cfd5dc;padding-left:20px;margin:0 0 16px}
+#quiz textarea{width:100%;height:84px;border-radius:12px;border:0;padding:10px;font:inherit;font-size:14px;color:var(--ink);background:rgba(0,0,0,.3);box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.1);margin-bottom:14px;resize:none;user-select:text;-webkit-user-select:text}
+#quiz label{display:flex;gap:8px;align-items:center;justify-content:center;font-size:12.5px;color:var(--ink2);margin:0 0 14px}
+#quiz .btn{animation:none}#quiz .row .btn{width:auto;flex:1}#quiz code{display:block;word-break:break-all;font-size:10px;color:var(--ink3);margin:0 0 12px;user-select:text;-webkit-user-select:text}
+#qsheet .qb{display:grid;gap:7px}#qsheet .btn{height:44px;font-size:14px}
+#rate{display:grid;gap:7px;margin:-6px 0 20px;text-align:left}
+#rate[hidden]{display:none}
+#rate .rh{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);text-align:center;margin-bottom:2px}
+#rate .rq{display:grid;grid-template-columns:1fr repeat(5,34px);gap:5px;align-items:center;font-size:12.5px;color:var(--ink2)}
+#rate button{height:34px;border-radius:10px;border:0;background:rgba(255,255,255,.07);color:var(--ink2);font-size:14px;font-weight:800}
+#rate button.on{background:linear-gradient(#ffd45a,#ffa53a);color:#2b1600}
 </style>
 </head>
 <body>
@@ -203,6 +215,9 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
   </div>
 </div>
 
+<div id="quiz" class="ov hidden" style="z-index:9"><div class="card" id="qcard"></div></div>
+<section id="qsheet" class="sheet"><div class="jt"><b id="qtitle" style="color:var(--hot)"></b><span id="qsub"></span></div><div class="qb" id="qbtns"></div></section>
+
 <div id="results" class="ov hidden">
   <div class="card">
     <h2>Run over</h2>
@@ -210,6 +225,7 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
     <div id="rnew" hidden>NEW BEST</div>
     <div class="rbest">Best <b id="rbest">0</b></div>
     <div id="rstats"></div>
+    <div id="rate" hidden></div>
     <button id="again" class="btn hot">Play again</button>
   </div>
 </div>
@@ -292,6 +308,17 @@ const ruleValues=()=>Object.fromEntries(Object.entries(RULE_SW).map(([k,[get]])=
 function applyRules(name){const R=RULESETS[name];if(!R)return false;for(const [k,[,set,def]] of Object.entries(RULE_SW))set(k in R?R[k]:def);return true}
 // the rule set the switches match right now ('custom' after a manual switch in Settings)
 function rulesName(){const v=ruleValues();for(const [n,R] of Object.entries(RULESETS))if(Object.entries(RULE_SW).every(([k,[,,def]])=>v[k]===(k in R?R[k]:def)))return n;return 'custom'}
+// plates (Clank plan/02 §2.5a): a finalist rule set with its retuned director and the drift kill, so runs end as they would in the
+// game. ?plates=A,B,C rotates them run by run in shuffled blocks (each block plays every plate once); ?plates=A plays one; ?plates=off
+// stops. While plates are on, the app names only the plate letter (Settings shows the rules with ?debug). src: the lab variant it copies.
+const PLATES={};
+const DIR_SW={KILL_STYLE:[()=>KILL_STYLE,v=>KILL_STYLE=v],CALM_START:[()=>CALM_START,v=>CALM_START=v],TIGHT:[()=>TIGHT,v=>TIGHT=v],RESCUE_COOLDOWN:[()=>RESCUE_COOLDOWN,v=>RESCUE_COOLDOWN=v],
+  DRIFT_START:[()=>DRIFT_START,v=>DRIFT_START=v],DRIFT_LEN:[()=>DRIFT_LEN,v=>DRIFT_LEN=v],DRIFT_SLOPE:[()=>DRIFT_SLOPE,v=>DRIFT_SLOPE=v],DRIFT_CAP:[()=>DRIFT_CAP,v=>DRIFT_CAP=v],
+  RUST_CHARGE:[()=>RUST_CHARGE,v=>RUST_CHARGE=v],RUST_MAX:[()=>RUST_MAX,v=>RUST_MAX=v],RUST_CALM:[()=>RUST_CALM,v=>RUST_CALM=v],RUST_OPEN:[()=>RUST_OPEN,v=>RUST_OPEN=v],
+  RUST_SPREAD:[()=>RUST_SPREAD,v=>RUST_SPREAD=v],RUST_CUBES:[()=>RUST_CUBES,v=>RUST_CUBES=v],RUSTED_LINES:[()=>RUSTED_LINES,v=>RUSTED_LINES=v],
+  RUSTED_POLISH:[()=>RUSTED_POLISH,v=>RUSTED_POLISH=v],RUSTED_USED:[()=>RUSTED_USED,v=>RUSTED_USED=v]};
+const DIR_DEF=Object.fromEntries(Object.entries(DIR_SW).map(([k,[get]])=>[k,get()]));
+function applyPlate(id){const P=PLATES[id];if(!P||!applyRules(P.rules))return false;for(const [k,[,set]] of Object.entries(DIR_SW))set(k in P.dir?P.dir[k]:DIR_DEF[k]);return true}
 const DIRS=[[0,1],[0,-1],[1,0],[-1,0]];
 const $=id=>document.getElementById(id);
 const cv=$('c'),ctx=cv.getContext('2d');
@@ -630,8 +657,16 @@ function recordRun(){
   const avg=LS.get('avgRate',25);LS.set('avgRate',avg*0.7+(score/placements)*0.3);
   LS.set('last',Date.now());
 }
+// plates (see PLATES): the one this run plays, and the shuffled blocks that rotate them
+let curPlate=null,rateNow=null;
+const plateList=()=>LS.get('plates','').split(',').filter(x=>PLATES[x]);
+function nextPlate(){let q=LS.get('pq',[]).filter(x=>plateList().includes(x));if(!q.length){q=plateList();for(let i=q.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[q[i],q[j]]=[q[j],q[i]]}}
+  const id=q.shift();LS.set('pq',q);return id}
+function setPlate(id){curPlate=id&&applyPlate(id)?id:null;document.querySelectorAll('[data-burst]').forEach(e=>e.textContent=BURST_MIN)}
 function newRun(){
   tlmEnd();recordRun();started=true;
+  if(curPlate&&placements)LS.set('rates',[...LS.get('rates',[]),{plate:curPlate,rules:rulesName(),len:placements,score,rate:rateNow,t:Date.now()}].slice(-500));
+  rateNow=null;if(plateList().length&&!quiz)setPlate(nextPlate());
   if(board){const now=performance.now(),cells=[];for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(board[r][c]!==-1)cells.push([r,c,board[r][c]]);if(cells.length)wipe={t0:now,cells}}
   board=empty();let k=0;while(k<START_CUBES){const r=rnd(N),c=rnd(N);if(board[r][c]<0){board[r][c]=rnd(NC);k++}}
   score=0;placements=0;trays=0;cooldown=0;killStart=-1;level=-1;applyLevel();banner='';runStart=Date.now();undoSnap=null;undoUsed=false;contUsed=false;jam=false;paintAt=paintPrev=null;
@@ -653,6 +688,7 @@ async function commit(slot,ar,ac){
   await play(res.steps,res.pc);board=res.g;
   if(tray.every(x=>!x)){await inflow();tray=dealTray();planBoard();dealFx()}
   busy=false;skip=false;clearChain();hud();checkJam();save();tlmReady();if(tlmQ.length>=30)tlmFlush();tryReload();
+  if(quiz&&quiz.phase==='practice'&&!jam&&placements>=QUIZ_ROUND)quizRoundEnd();
 }
 // filings rain onto random empty cells before each new tray
 async function inflow(){
@@ -709,7 +745,7 @@ async function play(steps,pc){
 }
 // the touch wave: every group touching the blast lights up; groups that can't catch BURST_MIN strain, show n/3 and fizzle
 async function waveFx(groups){
-  if(!groups||!groups.length||skip)return;
+  if(!groups||!groups.length||skip||quiz&&quiz.nm===0)return;
   const now=performance.now();let anyOk=false,near=false;
   for(const g of groups){
     for(const k of g.grp)touchGlow.set(k,{t0:now,ok:g.ok});
@@ -791,6 +827,7 @@ function clearChain(){const now=performance.now();for(const C of counters)if(!C.
 function checkJam(quiet){
   if(tray.some(p=>p&&fits(p)))return;
   jam=true;paintAt=paintPrev=null;
+  if(quiz&&quiz.phase==='practice'){quizRoundEnd();return}
   if(!quiet){jamT0=performance.now();sfx.jam();buzz([20,50,30]);tlm('j',{i:placements,score,board:tlmBoard(board),tray:tlmTray(tray)})}
   const best=LS.get('best',0);
   $('pinfo').textContent=`${score.toLocaleString()} · ${best?Math.round(score/best*100):100}% of best`;
@@ -802,7 +839,7 @@ function checkJam(quiet){
 function showJam(on){$('jam').classList.toggle('on',on);$('cap').style.opacity=on?0:1}
 function hud(){
   const best=Math.max(LS.get('best',0),score);LS.set('best',best);
-  $('best').textContent=best.toLocaleString();
+  $('best').textContent=best.toLocaleString()+(curPlate?` · Plate ${curPlate}`:'');
   if(score>runBest0&&runBest0>0&&!stats.newBest){stats.newBest=true;toast('New best','gold');sfx.best()}
   $('rule').textContent=(BOARD_FX==='pulse'&&plannedPulse?`after this tray: ${plannedPulse.toUpperCase()} · `:BOARD_FX==='rust'?`rust ${rustCount()} (+${plannedRust.length} next) · `:'')+(LEVELS_ON?`Lv ${level+1} · catch ${BURST_MIN} · ${NC} colours · `:'')+`rules ${rulesName()} · director: ${rule} · fill ${Math.round(fillPct(board)*100)}% · placements ${placements}`+(inflowNext()?` · next tray +${inflowNext()} cubes`:'');
   $('undo').disabled=undoUsed||!undoSnap||busy;
@@ -1035,6 +1072,8 @@ function render(now){
   if(drag&&drag.res){const p=tray[drag.slot],res=drag.res,col=COLS[p.color],lc=lighten(col,.55);
     ctx.globalCompositeOperation='lighter';for(const [r,c] of res.pc)glowAt(col,(c+.5)*cs,(r+.5)*cs,.3);ctx.globalCompositeOperation='source-over';
     for(const [r,c] of res.pc)cubeAt(p.color,(c+.5)*cs,(r+.5)*cs,cs,1.04,1.04,.94);
+    if(drag.quiz){ctx.lineWidth=Math.max(2,cs*.07);ctx.strokeStyle='#ffffff';for(const [r,c] of res.pc){rr(ctx,c*cs+cs*.03,r*cs+cs*.03,cs*.94,cs*.94,cs*.2);ctx.stroke()}}
+    if(!drag.plain){
     ctx.save();
     for(const m of res.moves){rr(ctx,m.tc*cs+cs*.12,m.tr*cs+cs*.12,cs*.76,cs*.76,cs*.16);ctx.fillStyle=rgba(col,.2);ctx.fill();ctx.setLineDash([cs*.1,cs*.07]);ctx.lineWidth=Math.max(1.5,cs*.045);ctx.strokeStyle=lc;ctx.stroke();ctx.setLineDash([])}
     ctx.lineCap='round';
@@ -1053,7 +1092,7 @@ function render(now){
       else if(st.type==='pull'&&lv>0){const cc=chainCol(lv+1);ctx.strokeStyle=cc;ctx.fillStyle=cc;ctx.lineWidth=Math.max(1.5,cs*.045);
         for(const m of st.moves)if(m.fr!==m.tr||m.fc!==m.tc){const x1=(m.fc+.5)*cs,y1=(m.fr+.5)*cs,x2=(m.tc+.5)*cs,y2=(m.tr+.5)*cs,ux=Math.sign(x2-x1),uy=Math.sign(y2-y1);ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2-ux*cs*.12,y2-uy*cs*.12);ctx.stroke();arrowHead(x1,y1,x2,y2,cs*.2)}}}}
     // near misses: groups that touch a blast but can't see BURST_MIN of their colour (why the chain stops there)
-    if(drag.trace)for(const L in drag.trace)for(const f of drag.trace[L])if(!f.ok&&f.n>0&&f.n>=f.need-2){
+    if(drag.trace&&!(quiz&&quiz.nm===0))for(const L in drag.trace)for(const f of drag.trace[L])if(!f.ok&&f.n>0&&f.n>=f.need-2){
       ctx.setLineDash([cs*.07,cs*.07]);ctx.lineWidth=Math.max(1.5,cs*.04);ctx.strokeStyle='rgba(205,212,222,.65)';
       for(const k of f.grp){rr(ctx,(k%N)*cs+cs*.1,(k/N|0)*cs+cs*.1,cs*.8,cs*.8,cs*.16);ctx.stroke()}
       for(const m of f.moves)if(m.fr!==m.tr||m.fc!==m.tc){ctx.beginPath();ctx.moveTo((m.fc+.5)*cs,(m.fr+.5)*cs);ctx.lineTo((m.tc+.5)*cs,(m.tr+.5)*cs);ctx.stroke()}
@@ -1063,7 +1102,7 @@ function render(now){
     // the outcome label sits above the plate, where it never hides a cell the preview is pointing at
     const ty=Math.max(-FM-cs*.5,-BY+cs*.3),fg=res.level>1?chainCol(Math.min(res.level,5)):ok?'#7cf0a8':'#ffffff';
     pill(label+(ok&&res.level<2?' · BLAST':ok?'':' · cools'),W/2,ty,cs*.36,fg,res.level>1||ok?fg:'rgba(255,255,255,.25)');
-  }
+  }}
   ctx.restore();
 
   // ---- unshaken layer: tray, the piece in hand, labels ----
@@ -1124,6 +1163,7 @@ function move(x,y){
   if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){buzz(3);if(drag.res.n>=BURST_MIN&&(!prev||prev.n<BURST_MIN))tone(660+drag.res.level*110,.05,'triangle',.03)}
 }
 cv.addEventListener('pointerdown',e=>{
+  if(quiz&&quiz.phase!=='practice')return;
   if(busy){skip=true;return}
   const {x,y}=pos(e);
   if(jam){if(!contUsed&&y>=0&&y<W&&x>=0&&x<W){const r=Math.floor(y/cs),c=Math.floor(x/cs);if(inb(r,c)&&board[r][c]>=0){paintAt={r,c};paintPrev=paintPreview(r,c);const P=paintPrev;tone(700,.05,'triangle',.04);buzz(5);
@@ -1164,8 +1204,13 @@ function showResults(){
   const best=LS.get('best',0),nb=score>runBest0&&score>0;
   $('rscore').textContent=score.toLocaleString();$('rbest').textContent=best.toLocaleString();$('rnew').hidden=!nb;
   $('rstats').innerHTML=`<div><b>${placements}</b><span>Pieces</span></div><div><b>${stats.blasted}</b><span>Blasted</span></div><div><b>${stats.maxChain>1?'×'+stats.maxChain:'–'}</b><span>Best chain</span></div>`;
-  showJam(false);$('results').classList.remove('hidden');if(nb)sfx.best();
+  rateUi();showJam(false);$('results').classList.remove('hidden');if(nb)sfx.best();
 }
+// the owner's three ratings per run on a plate (plan/02 §2.5a), sent with the run's end and kept on the phone ('rates')
+const RATE_Q=[['fun','Fun'],['why','I understood why things blasted'],['fair','It felt fair']];
+function rateUi(){const box=$('rate');box.hidden=!curPlate;if(!curPlate)return;rateNow={};
+  box.innerHTML=`<div class="rh">Plate ${curPlate} · 1 = not at all, 5 = very</div>`+RATE_Q.map(([k,l])=>`<div class="rq"><span>${l}</span>${[1,2,3,4,5].map(n=>`<button data-k="${k}" data-n="${n}">${n}</button>`).join('')}</div>`).join('');
+  box.querySelectorAll('button').forEach(b=>b.onclick=()=>{rateNow[b.dataset.k]=+b.dataset.n;buzz(4);box.querySelectorAll(`button[data-k="${b.dataset.k}"]`).forEach(x=>x.classList.toggle('on',x===b))})}
 $('again').onclick=()=>{$('results').classList.add('hidden');newRun()};
 addEventListener('resize',layout);
 // the play area can change size without a resize event (an installed iPhone app settling its safe areas after a relaunch
@@ -1223,10 +1268,10 @@ $('gear').onclick=()=>{hud();toggles();audioInfo();$('jam').classList.remove('on
 $('setclose').onclick=closeSet;
 
 // ---- save and resume: the run survives closing the app and updates ----
-function save(){if(!board||busy)return;LS.set('run',{v:1,rules:rulesName(),tlm:tlmRun,board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
+function save(){if(!board||busy||quiz)return;LS.set('run',{v:1,rules:rulesName(),plate:curPlate||'',tlm:tlmRun,board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
 function load(){
   const s=LS.get('run',null);if(!s||s.v!==1||!Array.isArray(s.board)||s.board.length!==N||!Array.isArray(s.tray))return false;
-  if((s.rules||'C5')!==rulesName())return false;
+  if((s.plate||'')!==(curPlate||'')||plateList().length&&!s.plate||(s.rules||'C5')!==rulesName())return false;
   ({board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0}=s);
   stats=stats||{blasted:0,maxChain:0,newBest:false};plannedRust=plannedRust||[];started=true;dispScore=score;
   tlmRun=s.tlm||{id:tlmId(),resumes:0};tlmRun.resumes++;tlmReady();return true;
@@ -1258,10 +1303,11 @@ function tlmFlush(beacon){
   if(beacon){if(navigator.sendBeacon&&navigator.sendBeacon(url,body))done();return}
   tlmBusy=true;fetch(url,{method:'POST',body,keepalive:body.length<60000}).then(r=>{tlmBusy=false;if(r.ok){done();if(tlmQ.length)tlmFlush()}}).catch(()=>{tlmBusy=false});
 }
-function tlmS(){tlm('s',{rules:rulesName(),sw:ruleValues(),pieces:PIECESET,blind:LS.get('rules','')?1:0,runs:LS.get('runs',0),best:LS.get('best',0),
-  dir:{DIRECTOR,KILL_STYLE,RHYTHM,CALM_START,TIGHT,RESCUE_COOLDOWN,DRIFT_START,DRIFT_LEN,DRIFT_SLOPE,DRIFT_CAP,RUST_CHARGE,RUST_MAX,TARGET}})}
+function tlmS(){tlm('s',{rules:rulesName(),plate:curPlate||null,quiz:quiz?1:0,sw:ruleValues(),pieces:PIECESET,blind:LS.get('rules','')?1:0,runs:LS.get('runs',0),best:LS.get('best',0),
+  dir:{DIRECTOR,KILL_STYLE,RHYTHM,CALM_START,TIGHT,RESCUE_COOLDOWN,DRIFT_START,DRIFT_LEN,DRIFT_SLOPE,DRIFT_CAP,RUST_CHARGE,RUST_MAX,TARGET},
+  rust:{RUST_CALM,RUST_OPEN,RUST_SPREAD,RUST_CUBES,RUSTED_LINES,RUSTED_POLISH,RUSTED_USED}})}
 function tlmStart(){tlmRun={id:tlmId(),resumes:0};tlmS();tlmReady();tlmFlush()}
-function tlmEnd(){if(!tlmRun||!placements)return;tlm('e',{len:placements,score,best:LS.get('best',0),end:jam?'jam':'quit',paint:contUsed?1:0,undo:undoUsed?1:0,resumes:tlmRun.resumes,secs:Math.round((Date.now()-runStart)/1000)});tlmFlush()}
+function tlmEnd(){if(!tlmRun||!placements)return;tlm('e',{len:placements,score,plate:curPlate||null,rate:rateNow&&Object.keys(rateNow).length?rateNow:null,best:LS.get('best',0),end:jam?'jam':'quit',paint:contUsed?1:0,undo:undoUsed?1:0,resumes:tlmRun.resumes,secs:Math.round((Date.now()-runStart)/1000)});tlmFlush()}
 // one drop: the board and tray it was made from, what the player picked up and hovered first, and what happened
 function tlmPlace(slot,r,c,res){tlm('p',{i:placements+1,tr:trays,rule,k:+driftK().toFixed(3),rules:rulesName(),board:tlmBoard(board),tray:tlmTray(tray),slot,r,c,
   think:tlmDec.t1?Math.round(tlmDec.t1-tlmDec.t0):null,ms:Math.round(performance.now()-tlmDec.t0),drags:tlmDec.drags,caught:res.caught,n:res.n,lvl:res.level,gain:res.gain})}
@@ -1287,15 +1333,77 @@ function frame(now){
   render(now);requestAnimationFrame(frame);
 }
 
+// ---- comprehension quiz (Clank plan/02 §2.5b): ?quiz=S plays it for rule set S; &nm=0 hides the near-miss visuals ----
+// 3 practice rounds of QUIZ_ROUND placements, one sentence on when cubes blast, then 10 positions from lab/quiz.js without the
+// drag preview and the same 10 (reshuffled) with it. Answers stay on the phone ('quizdone'), go out as play data if the tester
+// opted in, and show as a code the tester can copy and send.
+const QUIZ={
+  S:[{"kind":"blast","level":1,"board":"rrrrr...r.....1.r..1201.r.21.011..21100...2223..33333...4444.333","shape":15,"color":0,"r":1,"c":1},{"kind":"x2","level":2,"board":"rrrr....r.41111133333...r........2.......22.....................","shape":16,"color":1,"r":2,"c":5},{"kind":"blast","level":1,"board":"..000.2...000.22..00002......02...1..0....1..0....1.......1.....","shape":15,"color":0,"r":6,"c":3},{"kind":"x2","level":2,"board":"..000.2...000.22..00002......02...1..0....1..0....1.......1.....","shape":15,"color":0,"r":3,"c":0},{"kind":"none","level":0,"board":"r4......r4...333r444.333r.0..2...000222...0.....................","shape":18,"color":0,"r":5,"c":0},{"kind":"x3","level":3,"board":"rr......r.......r.....22330044.2330044..3300...3.......344.....3","shape":16,"color":3,"r":5,"c":4},{"kind":"x2","level":2,"board":"rrr.....4333............11111........44.....04.....00011........","shape":16,"color":3,"r":0,"c":4},{"kind":"x3","level":3,"board":"rr22111.333211..r3..1.44000.1...000.1....3...22.33...22.........","shape":0,"color":2,"r":5,"c":2},{"kind":"none","level":0,"board":"rrrr............r11...22r.1....2....333.....333.................","shape":15,"color":1,"r":1,"c":2},{"kind":"blast","level":1,"board":"r.......r3.1..3.r3311.3.r...1.3.4.....3.4.......4...............","shape":10,"color":3,"r":3,"c":1}],
+},QUIZ_ROUND=20;
+const QUIZ_ANS=['Nothing blasts','It blasts, no chain','Chain ×2','Chain ×3','Chain ×4 or more'],ansOf=lvl=>Math.min(lvl,4);
+let quiz=null;
+const quizSave=()=>LS.set('quiz',quiz);
+const quizCard=html=>{$('qcard').innerHTML=html;$('quiz').classList.remove('hidden')};
+const quizHide=()=>$('quiz').classList.add('hidden');
+const shuffled=n=>{const a=[...Array(n).keys()];for(let i=n-1;i>0;i--){const j=rnd(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
+function quizBegin(rules,nm){
+  quiz={rules,nm,phase:'intro',round:0,rule:'',items:[],k:0,answers:[],t0:Date.now()};applyRules(rules);quizSave();
+  quizCard(`<h2>A quick test</h2><p>Thanks for helping! This takes about 10 minutes:</p><ol><li>Play ${3} short practice rounds to learn the game.</li><li>Say in one sentence when cubes blast.</li><li>Look at 20 pictures and guess what each drop will do.</li></ol>
+    <label><input type="checkbox" id="qsend"> Send my answers (anonymous, nothing personal)</label><button class="btn hot" id="qgo">Start</button>`);
+  $('qgo').onclick=()=>{if($('qsend').checked){tlmOn=true;LS.set('tlm',true);tlmUi()}unlockAudio();$('title').classList.add('hidden');quizPractice()};
+}
+function quizPractice(){quiz.phase='practice';quiz.round++;quizSave();quizHide();newRun();toast(`Practice ${quiz.round} of 3`,'gold');log(`Practice round ${quiz.round} of 3: ${QUIZ_ROUND} pieces.`)}
+function quizRoundEnd(){
+  if(quiz.round<3){quiz.phase='between';quizSave();quizCard(`<h2>Round ${quiz.round} of 3 done</h2><p>${quiz.round===1?'Getting the hang of it? Two more short rounds.':'One more round.'}</p><button class="btn hot" id="qgo">Next round</button>`);$('qgo').onclick=quizPractice;return}
+  quiz.phase='rule';quizSave();
+  quizCard(`<h2>In your own words</h2><p>In one sentence: when do cubes blast?</p><textarea id="qrule" placeholder="Cubes blast when…"></textarea><button class="btn hot" id="qgo">Next</button>`);
+  $('qgo').onclick=()=>{quiz.rule=$('qrule').value.trim().slice(0,400);
+    const a=shuffled(QUIZ[quiz.rules].length),b=shuffled(QUIZ[quiz.rules].length);quiz.items=[...a.map(i=>({i,pv:0})),...b.map(i=>({i,pv:1}))];quiz.k=0;
+    quiz.phase='ask';quizSave();quizCard(`<h2>Now guess</h2><p>Each picture shows the plate and where a piece is dropped. Pick what you think will happen.</p><p>In the first 10 you only see the piece. In the last 10 you see the hints you get while dragging.</p><button class="btn hot" id="qgo">Show the first one</button>`);
+    $('qgo').onclick=()=>{quizHide();quizAsk()}};
+}
+const quizBoard=str=>Array.from({length:N},(_,r)=>Array.from({length:N},(_,c)=>{const ch=str[r*N+c];return ch==='.'?-1:ch==='r'?RUST:+ch}));
+function quizAsk(){
+  const it=quiz.items[quiz.k],P=QUIZ[quiz.rules][it.i],p={cells:SHAPES_BLAST[P.shape],color:P.color};
+  board=quizBoard(P.board);tray=[p,null,null];jam=false;busy=false;score=0;placements=0;plannedRust=[];undoSnap=null;showJam(false);hud();
+  const res=simulate(board,p,P.r,P.c),b0=copy(board);for(const [r,c] of res.pc)b0[r][c]=p.color;
+  drag=it.pv?{slot:0,res,trace:traceChain(b0,res.steps),t0:0,quiz:1}:{slot:0,res:{pc:res.pc,moves:[],steps:[],n:0,level:0},plain:true,t0:0,quiz:1};
+  $('qtitle').textContent=`${quiz.k+1} of ${quiz.items.length}`;$('qsub').textContent=it.pv?'the outlined piece, with the drag hints':'the outlined piece is dropped here';
+  $('qbtns').innerHTML=QUIZ_ANS.map((a,j)=>`<button class="btn" data-j="${j}">${a}</button>`).join('');
+  const t0=performance.now();
+  $('qbtns').querySelectorAll('button').forEach(b=>b.onclick=()=>{const j=+b.dataset.j;
+    quiz.answers.push({i:it.i,pv:it.pv,a:j,ok:j===ansOf(P.level)?1:0,ms:Math.round(performance.now()-t0)});quiz.k++;quizSave();buzz(6);
+    if(quiz.k<quiz.items.length)quizAsk();else quizDone()});
+  $('qsheet').classList.add('on');
+}
+function quizDone(){
+  $('qsheet').classList.remove('on');drag=null;quiz.phase='done';quizSave();
+  const part=pv=>quiz.answers.filter(a=>a.pv===pv).reduce((s,a)=>s+a.ok,0),res={rules:quiz.rules,nm:quiz.nm,rule:quiz.rule,a:quiz.answers.map(a=>[a.i,a.pv,a.a,a.ms]),s:[part(0),part(1)]};
+  LS.set('quizdone',[...LS.get('quizdone',[]),{...res,t:Date.now()}].slice(-20));
+  if(tlmOn){tlm('q',res);tlmFlush()}
+  const code=btoa(unescape(encodeURIComponent(JSON.stringify(res))));
+  quizCard(`<h2>Thank you!</h2><p>Without hints you got <b>${res.s[0]} of 10</b>; with the drag hints <b>${res.s[1]} of 10</b>.</p>${tlmOn?'<p>Your answers were sent.</p>':'<p>Please send this code to whoever asked you to do the test:</p>'}
+    <code id="qcode">${code}</code><div class="row"><button class="btn" id="qcopy">Copy code</button><button class="btn hot" id="qplay">Play CLACK</button></div>`);
+  $('qcopy').onclick=()=>{try{navigator.clipboard.writeText(code);toast('Copied')}catch(e){}};
+  $('qplay').onclick=()=>{LS.set('quiz',null);location.href=location.pathname};
+}
+
 // ---- start ----
 // rule set: ?rules=C7 picks one and the app remembers it, because an installed app opens without the query; ?rules=default goes back.
 // While a rule set comes from a link (blind tests, "Plate A/B/C"), Settings hides the rules unless the link also has ?debug.
 const QS=new URLSearchParams(location.search),DEBUG=QS.has('debug');
 {const q=QS.get('rules');if(q!=null)LS.set('rules',RULESETS[q]?q:'');const r=LS.get('rules','');if(r&&!applyRules(r))LS.set('rules','')}
-$('rulesbox').hidden=!!LS.get('rules','')&&!DEBUG;
+{const q=QS.get('quiz');if(q!=null&&QUIZ[q]&&!(LS.get('quiz',null)?.rules===q&&LS.get('quiz',null)?.phase!=='done'))LS.set('quiz',{rules:q,nm:QS.get('nm')==='0'?0:1,phase:'new'});
+  const z=LS.get('quiz',null);if(z&&QUIZ[z.rules]&&z.phase!=='done'){quiz=z;applyRules(z.rules)}}
+{const q=QS.get('plates');if(q!=null){LS.set('plates',q.split(',').filter(x=>PLATES[x]).join(','));LS.set('pq',[])}
+  const s=LS.get('run',null);if(!quiz&&s&&plateList().includes(s.plate))setPlate(s.plate)} // else newRun() deals the next plate
+$('rulesbox').hidden=(!!LS.get('rules','')||plateList().length>0||!!quiz)&&!DEBUG;
 document.querySelectorAll('[data-burst]').forEach(e=>e.textContent=BURST_MIN);
 knobs();sliders();toggles();layout();
-if(load()){$('score').textContent=score.toLocaleString();hud();trayT0=performance.now();if(!tray.some(p=>p&&fits(p)))checkJam(true);log('Run resumed.')}else newRun();
+if(quiz){newRun();$('title').classList.add('hidden');
+  const ph=quiz.phase;if(ph==='new'||ph==='intro')quizBegin(quiz.rules,quiz.nm);else if(ph==='ask')quizAsk();else if(ph==='between')quizRoundEnd();
+  else if(ph==='rule'){quiz.round=3;quizRoundEnd()}else{quiz.round=Math.max(0,quiz.round-1);quizPractice()}}
+else if(load()){$('score').textContent=score.toLocaleString();hud();trayT0=performance.now();if(!tray.some(p=>p&&fits(p)))checkJam(true);log('Run resumed.')}else newRun();
 tlmFlush();
 requestAnimationFrame(frame);
 {let skipTitle=false;try{skipTitle=sessionStorage.getItem('clack_skipTitle')==='1';sessionStorage.removeItem('clack_skipTitle')}catch(e){}
@@ -1305,7 +1413,7 @@ requestAnimationFrame(frame);
 
 // ---- offline + installable, and installed copies update themselves ----
 // a new version activates in the background; the page reloads at the next calm moment and the saved run resumes
-function tryReload(){if(!pendingReload)return;if(busy||drag||$('set').classList.contains('on')){setTimeout(tryReload,800);return}save();try{sessionStorage.setItem('clack_skipTitle',$('title').classList.contains('hidden')?'1':'0')}catch(e){}location.reload()}
+function tryReload(){if(!pendingReload)return;if(busy||drag||$('set').classList.contains('on')||quiz&&quiz.phase!=='done'){setTimeout(tryReload,800);return}save();try{sessionStorage.setItem('clack_skipTitle',$('title').classList.contains('hidden')?'1':'0')}catch(e){}location.reload()}
 if('serviceWorker' in navigator){
   let hadCtrl=!!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!hadCtrl){hadCtrl=true;return}pendingReload=true;tryReload()});
