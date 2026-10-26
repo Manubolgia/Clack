@@ -664,7 +664,7 @@ function dropCubes(){
 async function play(steps,pc){
   let magSet=pc?new Set(pc.map(([r,c])=>r*N+c)):null,lvl=0;
   const tr=traceChain(board,steps);
-  const polish=async st=>{for(const k of st.set){board[k/N|0][k%N]=-1;polishFx(k)}sfx.polish();await sleep(160)};
+  const polish=async st=>{for(const k of st.set){board[k/N|0][k%N]=-1;polishFx(k)}score+=st.set.size*5;hud();sfx.polish();await sleep(160)}; // +5 per polished rust (CLAUDE.md §3.4)
   for(let i=0;i<steps.length;i++){const st=steps[i];
     if(st.type==='pull'){const pre=magSet&&(lvl>0?CHAIN_COUNT==='clump':DROP_COUNT==='clump')?flood(board,magSet,st.color):null;
       await animMoves(st.moves,st.color,magSet,...(pre?(lvl>0?[pre.size,AFTERSHOCK_MIN,pre]:[pre.size-magSet.size,BURST_MIN,pre]):lvl>0?[0,CHAIN_CATCH||BURST_MIN]:[]));magSet=null}
@@ -1148,8 +1148,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=7;
+const APP_VERSION=8;
 const CHANGES=[
+  [8,'Rust polish scores',['The score now adds 5 points for each rust cell a blast polishes away. It was always in the rules but never shown.']],
   [7,'Rule sets for testing',['Settings → Rules for testing has a "Rule set" row to try the rule ideas being compared (C5 is the game you know). A test link can also pick one.','Groundwork for sharing anonymous play data. It stays off, and the game will ask first once it is switched on.']],
   [6,'Board and sound fixes',['Fixed the board sometimes looking squashed (not square) after the app reopened or updated itself; touches also land in the right cells again.','Sound rebuilt to survive iPhone quirks: if iOS leaves the sound stuck after the app was in the background, the next tap restarts it.','Settings → Feel has a "Test sound" button and a line showing the sound status.','This "What\'s new" card, and the full history in Settings.']],
   [5,'Chains that make sense',['New chain rule, "4 together": cubes touching a blast chain when the clump they would blast has 4 or more cubes. Before, a line of 4 chained when 1 cube touched the blast but not when 2 did. The old rule is in Settings → Rules for testing.','Fixed a rare bug where a chain could blast an empty cell and score a cube twice.','Fixed the catch counter sometimes staying stuck on screen after a chain.']],
