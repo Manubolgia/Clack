@@ -169,9 +169,11 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
     <div class="row" style="margin-top:8px"><button class="btn ghost" id="jreset" style="height:40px;font-size:13px">Reset juice</button><button class="btn ghost" id="newrun" style="height:40px;font-size:13px">New run</button></div>
     <h4>What's new</h4>
     <div id="hist"></div>
+    <div id="rulesbox">
     <h4>Rules for testing</h4>
     <div id="rule"></div>
     <div class="opt" id="knobs"></div>
+    </div>
   </div>
 </section>
 
@@ -181,7 +183,7 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
     <div class="sub">Magnet block puzzle</div>
     <div class="how">
       <div><i class="tile" style="--c:var(--c1)">⇣</i><span>Drop a piece. Cubes of its colour in its rows and columns fly to it.</span></div>
-      <div><i class="tile" style="--c:var(--c0)">3</i><span>Catch 3 and the clump blasts. Cubes touching a blast become magnets: <b>chain</b>.</span></div>
+      <div><i class="tile" style="--c:var(--c0)" data-burst>3</i><span>Catch <span data-burst>3</span> and the clump blasts. Cubes touching a blast become magnets: <b>chain</b>.</span></div>
       <div><i class="tile" style="--c:#7a3e1c;color:rgba(255,220,180,.6)">✦</i><span>Rust creeps in from the edges. Blasts polish it away.</span></div>
     </div>
     <button id="play" class="btn hot">Play</button>
@@ -217,7 +219,15 @@ let CHAIN_RULE='touch', MAX_CHAIN=5;
 // 'clump' = the clump it would blast (the group, what it pulls in and what already touches it) has AFTERSHOCK_MIN (4)+ cubes, like the paint bomb.
 // 'catch' = the original rule: it must pull BURST_MIN (3) cubes; its own cubes don't count, so a line of 4 chains when 1 cube touches the blast but not when 2 do.
 let CHAIN_COUNT='clump';
-const chainOk=(t,res,color)=>CHAIN_COUNT==='clump'?flood(t,res.clump,color).size>=AFTERSHOCK_MIN:res.caught>=BURST_MIN; // 'touch' = cubes touching a blast become magnets · 'classic' = the colour with most cubes around the hole wakes
+let CHAIN_CATCH=0; // 'catch' only: cubes a touching group must pull to chain; 0 = BURST_MIN, as in Stable C (C1 sets 2)
+const chainOk=(t,res,color)=>CHAIN_COUNT==='clump'?flood(t,res.clump,color).size>=AFTERSHOCK_MIN:res.caught>=(CHAIN_CATCH||BURST_MIN); // 'touch' = cubes touching a blast become magnets · 'classic' = the colour with most cubes around the hole wakes · 'clump' = a clump of CLUMP_MIN+ touching a blast blasts, no pull (C2)
+let CLUMP_MIN=3;
+// CRATER_BLOCK (touch rule): a later group in a chain wave can't pull cubes out of the crater an earlier group just formed.
+// false = Stable C as recorded in reference/fixtures.json, where that crater can blast an empty cell and score a cube twice.
+let CRATER_BLOCK=true;
+// DROP_COUNT: what a drop needs to blast. 'pull' = it pulls BURST_MIN cubes · 'clump' (C6) = that, or the piece and the cubes
+// of its colour touching it after its pull make a clump of piece size + BURST_MIN
+let DROP_COUNT='pull';
 // knobs (see the buttons under the board)
 let NC=5, BURST_MIN=3, RANGE=99; // colours · catches needed to burst · how far a magnet reaches (99 = whole row/column)
 let INFLOW=0, RAMP_EVERY=0;      // optional: cubes that fall onto the plate before each new tray · +1 more every N trays (off by default: every cube comes from your own pieces)
@@ -230,15 +240,16 @@ function applyLevel(){
 }
 // lab: the plate itself changes between trays. 'pulse' = the plate pulses GATHER (same colours slide together into lines) or SCATTER (touching same colours step apart)
 // 'rust' = rust creeps in from the edges onto empty cells in a fixed, previewed order; blasts polish away rust they touch
-let BOARD_FX='rust', RUST_RATE=1, RUST_MAX=36, plannedPulse=null, plannedRust=[], lastFx={moves:[],rust:[]};
+let BOARD_FX='rust', RUST_RATE=1, RUST_MAX=36, RUST_CHARGE=2, plannedPulse=null, plannedRust=[], lastFx={moves:[],rust:[]};
 const RUST=-2;
 let DIRECTOR='auto', TARGET=999;  // 'off' raw random trays · 'help' best trays, cubes land where they hurt least · 'kill' bad trays, cubes land where they hurt · 'auto' runs the rhythm until TARGET placements, then kills
 // auto rhythm: calm → charge (falling cubes take the colour that lines up with their row and column: the plate gets tight but loaded)
 // → rescue (once TIGHT cubes are down, the tray holds a piece that can clear most of the plate) → calm for RESCUE_COOLDOWN trays
 let RHYTHM=true, CALM_START=12, TIGHT=34, RESCUE_COOLDOWN=3, KILL_PICK=6, KILL_STYLE='none', killStart=-1;
 // drift (the default kill): no switch at all. From DRIFT_START placements the rhythm keeps running, but rescue pieces get weaker and more pieces
-// come in colours that can't catch, reaching full strength DRIFT_LEN placements later
-let DRIFT_START=40, DRIFT_LEN=60;
+// come in colours that can't catch, reaching full strength DRIFT_LEN placements later: each non-hero piece takes its dud colour
+// with probability min(DRIFT_CAP, DRIFT_SLOPE × k)
+let DRIFT_START=40, DRIFT_LEN=60, DRIFT_SLOPE=.75, DRIFT_CAP=.85;
 const driftK=()=>DIRECTOR==='auto'&&KILL_STYLE==='drift'?Math.max(0,(placements-DRIFT_START)/DRIFT_LEN):0; // CALM_START: the opening placements are left alone // kill deals the 3 least useful of KILL_PICK random pieces: 6 = subtle, 24 = brutal
 let cooldown=0,lastRescue=0;
 // PIECESET 'blast' adds Block Blast's single cube and 3×3 square to CLACK's 2–6 cell pieces
@@ -252,6 +263,23 @@ const SHAPES=[
 ];
 const SHAPES_BLAST=[...SHAPES,[[0,0]],[[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]]];
 const curShapes=()=>PIECESET==='blast'?SHAPES_BLAST:SHAPES;
+// rule sets (plan/02 §2.3; ?rules=C7 picks one): each sets every switch in RULE_SW, starting from its default (this app's C5)
+const RULE_SW={CHAIN_RULE:[()=>CHAIN_RULE,v=>CHAIN_RULE=v,'touch'],CHAIN_COUNT:[()=>CHAIN_COUNT,v=>CHAIN_COUNT=v,'clump'],CHAIN_CATCH:[()=>CHAIN_CATCH,v=>CHAIN_CATCH=v,0],
+  CLUMP_MIN:[()=>CLUMP_MIN,v=>CLUMP_MIN=v,3],CRATER_BLOCK:[()=>CRATER_BLOCK,v=>CRATER_BLOCK=v,true],BURST_MIN:[()=>BURST_MIN,v=>BURST_MIN=v,3],DROP_COUNT:[()=>DROP_COUNT,v=>DROP_COUNT=v,'pull']};
+const RULESETS={
+  SC:{CHAIN_COUNT:'catch',CRATER_BLOCK:false}, // Stable C exactly as in reference/fixtures.json, crater-stealing bug included
+  S:{CHAIN_COUNT:'catch'},                    // Stable C with the crater fix: "pull 3 to blast; cubes touching a blast can pull 3 too"
+  C1:{CHAIN_COUNT:'catch',CHAIN_CATCH:2},     // chains need 2 catches
+  C2:{CHAIN_RULE:'clump'},                    // a clump of 3 touching a blast blasts, no pull
+  C4:{CHAIN_RULE:'classic'},
+  C5:{},                                      // "pull 3 to blast; 4 together next to a blast blast too"
+  C5C6:{DROP_COUNT:'clump'},                  // "a magnet plus 3 of its colour blasts"
+  C7:{BURST_MIN:4},                           // "4 blasts: pull 4, or 4 together next to a blast"
+};
+const ruleValues=()=>Object.fromEntries(Object.entries(RULE_SW).map(([k,[get]])=>[k,get()]));
+function applyRules(name){const R=RULESETS[name];if(!R)return false;for(const [k,[,set,def]] of Object.entries(RULE_SW))set(k in R?R[k]:def);return true}
+// the rule set the switches match right now ('custom' after a manual switch in Settings)
+function rulesName(){const v=ruleValues();for(const [n,R] of Object.entries(RULESETS))if(Object.entries(RULE_SW).every(([k,[,,def]])=>v[k]===(k in R?R[k]:def)))return n;return 'custom'}
 const DIRS=[[0,1],[0,-1],[1,0],[-1,0]];
 const $=id=>document.getElementById(id);
 const cv=$('c'),ctx=cv.getContext('2d');
@@ -321,7 +349,7 @@ function runChain(g,crater,steps){
     const pol=new Set();for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&g[nr][nc]===RUST){g[nr][nc]=-1;pol.add(nr*N+nc)}}}
     if(pol.size){steps.push({type:'polish',set:pol});gain+=pol.size*5}
     if(level>=MAX_CHAIN)break;
-    const next=CHAIN_RULE==='touch'?touchWave(g,crater,steps):classicWave(g,crater,steps);
+    const next=CHAIN_RULE==='touch'?touchWave(g,crater,steps):CHAIN_RULE==='clump'?clumpWave(g,crater,steps):classicWave(g,crater,steps);
     if(!next)break;level++;crater=next;
   }
   return {gain,level};
@@ -335,7 +363,7 @@ function touchWave(g,crater,steps){
     const color=g[k0/N|0][k0%N];if(seen.has(k0)||color<0)continue;
     const grp=new Set([k0]),st=[k0];seen.add(k0);
     while(st.length){const k=st.pop(),r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(inb(nr,nc)&&border.has(nk)&&!seen.has(nk)&&g[nr][nc]===color){seen.add(nk);grp.add(nk);st.push(nk)}}}
-    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp,next);
+    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp,CRATER_BLOCK?next:null);
     if(!chainOk(t,res,color))continue;
     for(let r=0;r<N;r++)g[r]=t[r];
     steps.push({type:'wake',set:grp},{type:'pull',moves:res.moves,color});
@@ -351,12 +379,22 @@ function classicWave(g,crater,steps){
   steps.push({type:'wake',set:by[best]},{type:'pull',moves:res.moves,color:best});
   return res.moves.some(m=>m.fr!==m.tr||m.fc!==m.tc)&&cl.size>=AFTERSHOCK_MIN?cl:null;
 }
+// clump (C2): every same-colour clump touching the blast with CLUMP_MIN+ cubes blasts at the next level, with no pull
+function clumpWave(g,crater,steps){
+  const seen=new Set(),next=new Set();
+  for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(!inb(nr,nc)||g[nr][nc]<0||seen.has(nk))continue;
+    const cl=flood(g,new Set([nk]),g[nr][nc]);for(const x of cl)seen.add(x);
+    if(cl.size>=CLUMP_MIN){steps.push({type:'wake',set:cl});for(const x of cl)next.add(x)}}}
+  return next.size?next:null;
+}
 // a whole placement: the magnet pull, then the blast and its chain
 function simulate(b,p,ar,ac){
   const res=place(b,p,ar,ac);if(!res)return null;
   const steps=[{type:'pull',moves:res.moves,color:p.color}];let gain=0,level=0;
-  if(res.caught>=BURST_MIN)({gain,level}=runChain(res.g,flood(res.g,res.clump,p.color),steps));
-  return {g:res.g,pc:res.pc,moves:res.moves,caught:res.caught,steps,gain,level};
+  // n: what the drop counts toward BURST_MIN (its catch, or under DROP_COUNT 'clump' the cubes joined to the piece, if more)
+  const n=DROP_COUNT==='clump'?Math.max(res.caught,flood(res.g,new Set(res.pc.map(([r,c])=>r*N+c)),p.color).size-res.pc.length):res.caught;
+  if(n>=BURST_MIN)({gain,level}=runChain(res.g,flood(res.g,res.clump,p.color),steps));
+  return {g:res.g,pc:res.pc,moves:res.moves,caught:res.caught,n,steps,gain,level};
 }
 const resolveSync=simulate;
 const moveValue=x=>x.gain/10-filledN(x.g)+0.5*mobility(x.g);
@@ -397,7 +435,7 @@ function choosePulse(){
   if(r==='charge')return usedN(board)>=TIGHT-6?'gather':'scatter'; // close to tight: line the plate up for the save
   return r==='rescue'||r==='help'?'gather':'calm';
 }
-function rustAmount(){const r=directorRule();return DIRECTOR==='off'?RUST_RATE:r==='charge'||r==='kill'?2:0}
+function rustAmount(){const r=directorRule();return DIRECTOR==='off'?RUST_RATE:r==='charge'||r==='kill'?RUST_CHARGE:0}
 function rustPlan(k){const out=[];if(k<=0)return out;let have=board.flat().filter(v=>v===RUST).length;
   for(const [r,c] of RING_ORDER){if(out.length>=k||have+out.length>=RUST_MAX)break;if(board[r][c]===-1)out.push([r,c])}return out}
 function planBoard(){plannedPulse=BOARD_FX==='pulse'?choosePulse():null;plannedRust=BOARD_FX==='rust'?rustPlan(rustAmount()):[]}
@@ -416,7 +454,7 @@ function bestClear(g,p){const f=filledN(g)+p.cells.length;let best=-1;for(let r=
 function randPiece(big=false){const S=curShapes();let s;do{s=S[rnd(S.length)]}while(big?s.length<4&&Math.random()<0.5:s.length>4&&Math.random()<0.6);return {cells:s,color:rnd(NC)}}
 function dealTray(){
   const tr=dealTray0(),k=driftK();
-  if(k>0)for(const p of tr)if(!p.hero&&Math.random()<Math.min(.85,.75*k))p.color=dudColour(p);
+  if(k>0)for(const p of tr)if(!p.hero&&Math.random()<Math.min(DRIFT_CAP,DRIFT_SLOPE*k))p.color=dudColour(p);
   return tr;
 }
 function dealTray0(){
@@ -465,8 +503,8 @@ function traceWave(g,crater){ // same order and logic as touchWave
     const color=g[k0/N|0][k0%N];if(seen.has(k0)||color<0)continue;
     const grp=new Set([k0]),st=[k0];seen.add(k0);
     while(st.length){const k=st.pop(),r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(inb(nr,nc)&&border.has(nk)&&!seen.has(nk)&&g[nr][nc]===color){seen.add(nk);grp.add(nk);st.push(nk)}}}
-    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp,next),ok=chainOk(t,res,color),cl=CHAIN_COUNT==='clump';
-    out.push({grp,color,caught:res.caught,moves:res.moves,ok,n:cl?flood(t,res.clump,color).size:res.caught,need:cl?AFTERSHOCK_MIN:BURST_MIN});
+    const t=copy(g),res=pull(t,[...grp].map(k=>[k/N|0,k%N]),color,grp,CRATER_BLOCK?next:null),ok=chainOk(t,res,color),cl=CHAIN_COUNT==='clump';
+    out.push({grp,color,caught:res.caught,moves:res.moves,ok,n:cl?flood(t,res.clump,color).size:res.caught,need:cl?AFTERSHOCK_MIN:CHAIN_CATCH||BURST_MIN});
     if(ok){for(let r=0;r<N;r++)g[r]=t[r];for(const k of flood(g,res.clump,color))next.add(k)}
   }
   return out;
@@ -572,7 +610,7 @@ function newRun(){
   stats={blasted:0,maxChain:0,newBest:false};runBest0=LS.get('best',0);dispScore=0;
   flying=[];pending.clear();rustGrow.clear();strain.clear();touchGlow.clear();counter=null;counters=[];mag=null;charge=null;chainText='';heatT=0;
   tray=dealTray();planBoard();showJam(false);dealFx();hud();save();
-  log('Drag a piece onto the plate. Catch 3 of its colour to blast.');
+  log(`Drag a piece onto the plate. Catch ${BURST_MIN} of its colour to blast.`);
 }
 async function commit(slot,ar,ac){
   const p=tray[slot],res=simulate(board,p,ar,ac);if(!res)return;
@@ -582,7 +620,7 @@ async function commit(slot,ar,ac){
   const now=performance.now();
   for(const [r,c] of res.pc){board[r][c]=p.color;pops.push({k:r*N+c,t0:now,dr:0,dc:0})}
   dropFx(res.pc,p.color);
-  log(`Caught ${res.caught}/${BURST_MIN}`+(res.caught<BURST_MIN?' → piece cools into cubes':res.level>1?` → BURST → CHAIN ×${res.level}`:' → BURST'));
+  log(`Caught ${res.n}/${BURST_MIN}`+(res.n<BURST_MIN?' → piece cools into cubes':res.level>1?` → BURST → CHAIN ×${res.level}`:' → BURST'));
   await play(res.steps,res.pc);board=res.g;
   if(tray.every(x=>!x)){await inflow();tray=dealTray();planBoard();dealFx()}
   busy=false;skip=false;clearChain();hud();checkJam();save();tryReload();
@@ -624,7 +662,8 @@ async function play(steps,pc){
   const tr=traceChain(board,steps);
   const polish=async st=>{for(const k of st.set){board[k/N|0][k%N]=-1;polishFx(k)}sfx.polish();await sleep(160)};
   for(let i=0;i<steps.length;i++){const st=steps[i];
-    if(st.type==='pull'){const pre=lvl>0&&magSet&&CHAIN_COUNT==='clump'?flood(board,magSet,st.color):null;await animMoves(st.moves,st.color,magSet,...(pre?[pre.size,AFTERSHOCK_MIN,pre]:[]));magSet=null}
+    if(st.type==='pull'){const pre=magSet&&(lvl>0?CHAIN_COUNT==='clump':DROP_COUNT==='clump')?flood(board,magSet,st.color):null;
+      await animMoves(st.moves,st.color,magSet,...(pre?(lvl>0?[pre.size,AFTERSHOCK_MIN,pre]:[pre.size-magSet.size,BURST_MIN,pre]):lvl>0?[0,CHAIN_CATCH||BURST_MIN]:[]));magSet=null}
     else if(st.type==='wake'){
       wake=st.set;wakeT0=performance.now();magSet=st.set;sfx.chime();buzz(12);
       for(const k of st.set)rings.push({x:(k%N+.5)*cs,y:((k/N|0)+.5)*cs,t0:wakeT0,dur:420,r0:cs*.35,r1:cs*1.1,col:chainCol(lvl+1),w:cs*.09});
@@ -735,7 +774,7 @@ function hud(){
   const best=Math.max(LS.get('best',0),score);LS.set('best',best);
   $('best').textContent=best.toLocaleString();
   if(score>runBest0&&runBest0>0&&!stats.newBest){stats.newBest=true;toast('New best','gold');sfx.best()}
-  $('rule').textContent=(BOARD_FX==='pulse'&&plannedPulse?`after this tray: ${plannedPulse.toUpperCase()} · `:BOARD_FX==='rust'?`rust ${rustCount()} (+${plannedRust.length} next) · `:'')+(LEVELS_ON?`Lv ${level+1} · catch ${BURST_MIN} · ${NC} colours · `:'')+`director: ${rule} · fill ${Math.round(fillPct(board)*100)}% · placements ${placements}`+(inflowNext()?` · next tray +${inflowNext()} cubes`:'');
+  $('rule').textContent=(BOARD_FX==='pulse'&&plannedPulse?`after this tray: ${plannedPulse.toUpperCase()} · `:BOARD_FX==='rust'?`rust ${rustCount()} (+${plannedRust.length} next) · `:'')+(LEVELS_ON?`Lv ${level+1} · catch ${BURST_MIN} · ${NC} colours · `:'')+`rules ${rulesName()} · director: ${rule} · fill ${Math.round(fillPct(board)*100)}% · placements ${placements}`+(inflowNext()?` · next tray +${inflowNext()} cubes`:'');
   $('undo').disabled=undoUsed||!undoSnap||busy;
 }
 const log=t=>$('cap').textContent=t;
@@ -989,7 +1028,7 @@ function render(now){
       for(const m of f.moves)if(m.fr!==m.tr||m.fc!==m.tc){ctx.beginPath();ctx.moveTo((m.fc+.5)*cs,(m.fr+.5)*cs);ctx.lineTo((m.tc+.5)*cs,(m.tr+.5)*cs);ctx.stroke()}
       ctx.setLineDash([]);const k0=[...f.grp][0];pill(`${f.n}/${f.need}`,(k0%N+.5)*cs,(k0/N|0)*cs+cs*.5,cs*.22,'#cdd4de','rgba(205,212,222,.45)')}
     ctx.restore();
-    const ok=res.caught>=BURST_MIN,[r0,c0]=res.pc[0],label=`${res.caught}/${BURST_MIN}`+(res.level>1?` · CHAIN ×${res.level}`:'');
+    const ok=res.n>=BURST_MIN,[r0,c0]=res.pc[0],label=`${res.n}/${BURST_MIN}`+(res.level>1?` · CHAIN ×${res.level}`:'');
     // the outcome label sits above the plate, where it never hides a cell the preview is pointing at
     const ty=Math.max(-FM-cs*.5,-BY+cs*.3),fg=res.level>1?chainCol(Math.min(res.level,5)):ok?'#7cf0a8':'#ffffff';
     pill(label+(ok&&res.level<2?' · BLAST':ok?'':' · cools'),W/2,ty,cs*.36,fg,res.level>1||ok?fg:'rgba(255,255,255,.25)');
@@ -1050,7 +1089,7 @@ function move(x,y){
   drag.ar=Math.round(drag.py/cs);drag.ac=Math.round(drag.px/cs);
   const prev=drag.res;drag.res=simulate(board,p,drag.ar,drag.ac);
   if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){const b0=copy(board);for(const [r,c] of drag.res.pc)b0[r][c]=p.color;drag.trace=traceChain(b0,drag.res.steps)}else if(!drag.res)drag.trace=null;
-  if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){buzz(3);if(drag.res.caught>=BURST_MIN&&(!prev||prev.caught<BURST_MIN))tone(660+drag.res.level*110,.05,'triangle',.03)}
+  if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){buzz(3);if(drag.res.n>=BURST_MIN&&(!prev||prev.n<BURST_MIN))tone(660+drag.res.level*110,.05,'triangle',.03)}
 }
 cv.addEventListener('pointerdown',e=>{
   if(busy){skip=true;return}
@@ -1122,7 +1161,7 @@ $('newsok').onclick=()=>{unlockAudio();$('news').classList.add('hidden')};
 // knob buttons: each row sets one rule and restarts the run
 const KNOBS=[['Reach',v=>RANGE=v,()=>RANGE,[[99,'whole line'],[3,'3'],[2,'2']]],['Catch',v=>BURST_MIN=v,()=>BURST_MIN,[[3,'3'],[4,'4']]],
   ['Colours',v=>NC=v,()=>NC,[[4,'4'],[5,'5']]],['Cubes per tray',v=>INFLOW=v,()=>INFLOW,[[0,'0'],[2,'2'],[3,'3'],[6,'6']]],['Ramp',v=>RAMP_EVERY=v,()=>RAMP_EVERY,[[0,'off'],[5,'+1 every 5 trays']]],
-  ['Chain rule',v=>CHAIN_RULE=v,()=>CHAIN_RULE,[['touch','touching cubes'],['classic','classic']]],['Touching cubes chain when',v=>CHAIN_COUNT=v,()=>CHAIN_COUNT,[['clump','4 together (new)'],['catch','they pull 3 (original)']]],['Max chain',v=>MAX_CHAIN=v,()=>MAX_CHAIN,[[3,'3'],[5,'5'],[9,'9']]],
+  ['Rule set',v=>applyRules(v),rulesName,Object.keys(RULESETS).map(k=>[k,k])],['Chain rule',v=>CHAIN_RULE=v,()=>CHAIN_RULE,[['touch','touching cubes'],['classic','classic'],['clump','clumps of 3']]],['Touching cubes chain when',v=>CHAIN_COUNT=v,()=>CHAIN_COUNT,[['clump','4 together (new)'],['catch','they pull 3 (original)']]],['Max chain',v=>MAX_CHAIN=v,()=>MAX_CHAIN,[[3,'3'],[5,'5'],[9,'9']]],
   ['Director',v=>DIRECTOR=v,()=>DIRECTOR,[['off','off'],['help','help'],['kill','kill'],['auto','auto']],true],['Auto ends run at',v=>TARGET=v,()=>TARGET,[[90,'90'],[120,'120'],[999,'never']],true],
   ['Pieces',v=>PIECESET=v,()=>PIECESET,[['blast','+ 1×1 and 3×3'],['clack','CLACK only']]],['Start cubes',v=>START_CUBES=v,()=>START_CUBES,[[0,'none'],[18,'18']]],
   ['Board',v=>BOARD_FX=v,()=>BOARD_FX,[['none','plain'],['pulse','magnetic pulses'],['rust','rust']]],
@@ -1149,9 +1188,10 @@ $('gear').onclick=()=>{hud();toggles();audioInfo();$('jam').classList.remove('on
 $('setclose').onclick=closeSet;
 
 // ---- save and resume: the run survives closing the app and updates ----
-function save(){if(!board||busy)return;LS.set('run',{v:1,board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
+function save(){if(!board||busy)return;LS.set('run',{v:1,rules:rulesName(),board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
 function load(){
   const s=LS.get('run',null);if(!s||s.v!==1||!Array.isArray(s.board)||s.board.length!==N||!Array.isArray(s.tray))return false;
+  if((s.rules||'C5')!==rulesName())return false;
   ({board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0}=s);
   stats=stats||{blasted:0,maxChain:0,newBest:false};plannedRust=plannedRust||[];started=true;dispScore=score;return true;
 }
@@ -1176,6 +1216,12 @@ function frame(now){
 }
 
 // ---- start ----
+// rule set: ?rules=C7 picks one and the app remembers it, because an installed app opens without the query; ?rules=default goes back.
+// While a rule set comes from a link (blind tests, "Plate A/B/C"), Settings hides the rules unless the link also has ?debug.
+const QS=new URLSearchParams(location.search),DEBUG=QS.has('debug');
+{const q=QS.get('rules');if(q!=null)LS.set('rules',RULESETS[q]?q:'');const r=LS.get('rules','');if(r&&!applyRules(r))LS.set('rules','')}
+$('rulesbox').hidden=!!LS.get('rules','')&&!DEBUG;
+document.querySelectorAll('[data-burst]').forEach(e=>e.textContent=BURST_MIN);
 knobs();sliders();toggles();layout();
 if(load()){$('score').textContent=score.toLocaleString();hud();trayT0=performance.now();if(!tray.some(p=>p&&fits(p)))checkJam(true);log('Run resumed.')}else newRun();
 requestAnimationFrame(frame);
