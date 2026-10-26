@@ -1348,7 +1348,7 @@ const quizHide=()=>$('quiz').classList.add('hidden');
 const shuffled=n=>{const a=[...Array(n).keys()];for(let i=n-1;i>0;i--){const j=rnd(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
 function quizBegin(rules,nm){
   quiz={rules,nm,phase:'intro',round:0,rule:'',items:[],k:0,answers:[],t0:Date.now()};applyRules(rules);quizSave();
-  quizCard(`<h2>A quick test</h2><p>Thanks for helping! This takes about 10 minutes:</p><ol><li>Play ${3} short practice rounds to learn the game.</li><li>Say in one sentence when cubes blast.</li><li>Look at 20 pictures and guess what each drop will do.</li></ol>
+  quizCard(`<h2>A quick test</h2><p>Thanks for helping! This takes about 10 minutes:</p><ol><li>Play 3 short practice rounds to learn the game.</li><li>Say in one sentence when cubes blast.</li><li>Look at 20 pictures and guess what each drop will do.</li></ol>
     <label><input type="checkbox" id="qsend"> Send my answers (anonymous, nothing personal)</label><button class="btn hot" id="qgo">Start</button>`);
   $('qgo').onclick=()=>{if($('qsend').checked){tlmOn=true;LS.set('tlm',true);tlmUi()}unlockAudio();$('title').classList.add('hidden');quizPractice()};
 }
