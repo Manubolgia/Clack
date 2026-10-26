@@ -245,6 +245,15 @@ function applyLevel(){
 // 'rust' = rust creeps in from the edges onto empty cells in a fixed, previewed order; blasts polish away rust they touch
 let BOARD_FX='rust', RUST_RATE=1, RUST_MAX=36, RUST_CHARGE=2, plannedPulse=null, plannedRust=[], lastFx={moves:[],rust:[]};
 const RUST=-2;
+// rust variants for the lab (CLAUDE.md §11.2–11.3, Clank plan/02 §2.6), all off by default:
+// RUST_CALM (R2): rust per calm tray from CALM_START on · RUST_OPEN (R4): from this placement the opening's calm trays plan RUST_CHARGE (0 = never)
+// RUST_SPREAD (R5): planned rust takes the cells touching rust first (ring order among them), then the ring order
+// RUST_CUBES (rusted cubes): planned rust also lands on cubes. A rusted cube (RUSTED − colour) is inert: it can't be pulled, caught or blasted,
+// and blocks magnet lines like rust (RUSTED_LINES 'pass': lines see past it). A blast touching it polishes it (+5). RUSTED_POLISH 'restore':
+// it becomes a normal cube when the chain ends and sits out the rest of that chain · 'chain': a normal cube at once, so it can join the next
+// touch wave · 'empty': the cube goes with the rust. RUSTED_USED: it counts as used for the director.
+let RUST_CALM=0, RUST_OPEN=0, RUST_SPREAD=false, RUST_CUBES=false, RUSTED_LINES='block', RUSTED_POLISH='restore', RUSTED_USED=true;
+const RUSTED=-10, isRust=v=>v===RUST||v<=RUSTED;
 let DIRECTOR='auto', TARGET=999;  // 'off' raw random trays · 'help' best trays, cubes land where they hurt least · 'kill' bad trays, cubes land where they hurt · 'auto' runs the rhythm until TARGET placements, then kills
 // auto rhythm: calm → charge (falling cubes take the colour that lines up with their row and column: the plate gets tight but loaded)
 // → rescue (once TIGHT cubes are down, the tray holds a piece that can clear most of the plate) → calm for RESCUE_COOLDOWN trays
@@ -311,7 +320,7 @@ function pull(g,mags,color,magSet,block){
       const k=rr*N+cc;
       if(magSet.has(k)||block&&block.has(k))break;
       const v=g[rr][cc];
-      if(v===RUST)break;
+      if(v===RUST||v<=RUSTED&&RUSTED_LINES==='block')break;
       if(v>=0){if(v!==color)break;if(!claimed.has(k)){claimed.add(k);list.push({r:rr,c:cc,dr:-dr,dc:-dc,dist:Math.abs(rr-r)+Math.abs(cc-c)})}}
       rr+=dr;cc+=dc;d++;
     }
@@ -342,19 +351,25 @@ function flood(g,set,color){
 
 // ---- director ----
 // the director only changes what is not shown yet: the next tray and where the announced cubes land
-const filledN=g=>g.flat().filter(v=>v>=0).length, usedN=g=>g.flat().filter(v=>v!==-1).length, rustCount=()=>board.flat().filter(v=>v===RUST).length, mobility=g=>curShapes().reduce((s,sh)=>s+(fits({cells:sh},g)?1:0),0);
+const filledN=g=>g.flat().filter(v=>v>=0).length, usedN=g=>g.flat().filter(v=>v!==-1&&(RUSTED_USED||v>RUSTED)).length, rustCount=()=>board.flat().filter(isRust).length, mobility=g=>curShapes().reduce((s,sh)=>s+(fits({cells:sh},g)?1:0),0);
 // ---- chain reactions: one synchronous resolver; the drag preview reads it and the animation replays its steps ----
 // steps: {type:'pull',moves,color} · {type:'wake',set} (cubes that turn into magnets) · {type:'burst',set,level}
+// steps also: {type:'polish',set} (rust that goes) · {type:'clean',set} (rusted cubes whose coat comes off now)
 function runChain(g,crater,steps){
-  let gain=0,level=1;
+  let gain=0,level=1;const sat=new Set(); // rusted cubes polished in this chain that wait for its end ('restore')
+  const clean=set=>{for(const k of set)g[k/N|0][k%N]=RUSTED-g[k/N|0][k%N];steps.push({type:'clean',set});gain+=set.size*5};
   for(;;){
     steps.push({type:'burst',set:crater,level});for(const k of crater)g[k/N|0][k%N]=-1;gain+=crater.size*10*level;
-    const pol=new Set();for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc;if(inb(nr,nc)&&g[nr][nc]===RUST){g[nr][nc]=-1;pol.add(nr*N+nc)}}}
+    const pol=new Set(),cln=new Set();
+    for(const k of crater){const r=k/N|0,c=k%N;for(const [dr,dc] of DIRS){const nr=r+dr,nc=c+dc,nk=nr*N+nc;if(!inb(nr,nc))continue;const v=g[nr][nc];
+      if(v===RUST||v<=RUSTED&&RUSTED_POLISH==='empty'){g[nr][nc]=-1;pol.add(nk)}else if(v<=RUSTED&&!sat.has(nk)){if(RUSTED_POLISH==='chain')cln.add(nk);else sat.add(nk)}}}
     if(pol.size){steps.push({type:'polish',set:pol});gain+=pol.size*5}
+    if(cln.size)clean(cln);
     if(level>=MAX_CHAIN)break;
     const next=CHAIN_RULE==='touch'?touchWave(g,crater,steps):CHAIN_RULE==='clump'?clumpWave(g,crater,steps):classicWave(g,crater,steps);
     if(!next)break;level++;crater=next;
   }
+  if(sat.size)clean(sat);
   return {gain,level};
 }
 // touch: every cube touching the blast becomes a magnet; a same-colour group that can catch BURST_MIN of its colour pulls them in and blasts (no catch = nothing moves)
@@ -439,14 +454,21 @@ function choosePulse(){
   if(r==='charge')return usedN(board)>=TIGHT-6?'gather':'scatter'; // close to tight: line the plate up for the save
   return r==='rescue'||r==='help'?'gather':'calm';
 }
-function rustAmount(){const r=directorRule();return DIRECTOR==='off'?RUST_RATE:r==='charge'||r==='kill'?RUST_CHARGE:0}
-function rustPlan(k){const out=[];if(k<=0)return out;let have=board.flat().filter(v=>v===RUST).length;
-  for(const [r,c] of RING_ORDER){if(out.length>=k||have+out.length>=RUST_MAX)break;if(board[r][c]===-1)out.push([r,c])}return out}
+function rustAmount(){const r=directorRule();if(DIRECTOR==='off')return RUST_RATE;if(r==='charge'||r==='kill')return RUST_CHARGE;
+  if(r==='calm')return placements>=CALM_START?RUST_CALM:RUST_OPEN&&placements>=RUST_OPEN?RUST_CHARGE:0;return 0}
+function rustPlan(k){const out=[];if(k<=0)return out;let have=board.flat().filter(isRust).length;
+  const open=(r,c)=>board[r][c]===-1||RUST_CUBES&&board[r][c]>=0;
+  if(RUST_SPREAD){const taken=new Set(),rusty=(r,c)=>isRust(board[r][c])||taken.has(r*N+c),free=([r,c])=>open(r,c)&&!taken.has(r*N+c);
+    while(out.length<k&&have+out.length<RUST_MAX){
+      const pick=RING_ORDER.find(x=>free(x)&&DIRS.some(([dr,dc])=>inb(x[0]+dr,x[1]+dc)&&rusty(x[0]+dr,x[1]+dc)))||RING_ORDER.find(free);
+      if(!pick)break;taken.add(pick[0]*N+pick[1]);out.push(pick)}
+    return out}
+  for(const [r,c] of RING_ORDER){if(out.length>=k||have+out.length>=RUST_MAX)break;if(open(r,c))out.push([r,c])}return out}
 function planBoard(){plannedPulse=BOARD_FX==='pulse'?choosePulse():null;plannedRust=BOARD_FX==='rust'?rustPlan(rustAmount()):[]}
 function boardFx(){
   const out={moves:[],rust:[],pulse:plannedPulse};
   if(BOARD_FX==='pulse'&&plannedPulse&&plannedPulse!=='calm'){const ps=pulseSim(board,plannedPulse);board=ps.g;out.moves=ps.moves}
-  if(BOARD_FX==='rust')for(const [r,c] of plannedRust)if(board[r][c]===-1){board[r][c]=RUST;out.rust.push([r,c])}
+  if(BOARD_FX==='rust')for(const [r,c] of plannedRust){const v=board[r][c];if(v===-1||RUST_CUBES&&v>=0){board[r][c]=v===-1?RUST:RUSTED-v;out.rust.push([r,c])}}
   return out;
 }
 // the colour this shape would catch the least with here
@@ -520,8 +542,10 @@ function traceChain(b0,steps){
   for(let i=0;i<steps.length;i++){const st=steps[i];
     if(st.type==='pull')for(const m of st.moves){g[m.fr][m.fc]=-1;g[m.tr][m.tc]=st.color}
     else if(st.type==='polish')for(const k of st.set)g[k/N|0][k%N]=-1;
+    else if(st.type==='clean')for(const k of st.set)g[k/N|0][k%N]=RUSTED-g[k/N|0][k%N];
     else if(st.type==='burst'){for(const k of st.set)g[k/N|0][k%N]=-1;
       if(steps[i+1]&&steps[i+1].type==='polish'){i++;for(const k of steps[i].set)g[k/N|0][k%N]=-1}
+      if(RUSTED_POLISH==='chain'&&steps[i+1]&&steps[i+1].type==='clean'){i++;for(const k of steps[i].set)g[k/N|0][k%N]=RUSTED-g[k/N|0][k%N]}
       if(st.level<MAX_CHAIN)out[st.level]=traceWave(copy(g),st.set)}
   }
   return out;
@@ -634,7 +658,7 @@ async function commit(slot,ar,ac){
 async function inflow(){
   const before=copy(board),placed=dropCubes(),after=copy(board);board=before;
   if(lastFx.moves.length){log(lastFx.pulse==='gather'?'Pulse: GATHER, colours slide together.':'Pulse: SCATTER, touching colours step apart.');combo=0;await animMoves(lastFx.moves)}
-  for(const [r,c] of lastFx.rust){board[r][c]=RUST;rustGrow.set(r*N+c,performance.now());rustFx(r,c);sfx.rasp();buzz(4);await sleep(110)}
+  for(const [r,c] of lastFx.rust){board[r][c]=after[r][c];rustGrow.set(r*N+c,performance.now());rustFx(r,c);sfx.rasp();buzz(4);await sleep(110)}
   flash=null;board=copy(board);for(const [r,c] of placed)board[r][c]=-1;
   for(let i=0;i<placed.length;i++){const [r,c,col]=placed[i];board[r][c]=col;flash=new Set([r*N+c]);sfx.clack(i);await sleep(70)}
   flash=null;board=after;if(placed.length)log(`${placed.length} new cubes fell onto the plate.`);
@@ -665,7 +689,7 @@ function dropCubes(){
 async function play(steps,pc){
   let magSet=pc?new Set(pc.map(([r,c])=>r*N+c)):null,lvl=0;
   const tr=traceChain(board,steps);
-  const polish=async st=>{for(const k of st.set){board[k/N|0][k%N]=-1;polishFx(k)}score+=st.set.size*5;hud();sfx.polish();await sleep(160)}; // +5 per polished rust (CLAUDE.md §3.4)
+  const polish=async st=>{for(const k of st.set){board[k/N|0][k%N]=st.type==='clean'?RUSTED-board[k/N|0][k%N]:-1;polishFx(k)}score+=st.set.size*5;hud();sfx.polish();await sleep(160)}; // +5 per polished rust (CLAUDE.md §3.4)
   for(let i=0;i<steps.length;i++){const st=steps[i];
     if(st.type==='pull'){const pre=magSet&&(lvl>0?CHAIN_COUNT==='clump':DROP_COUNT==='clump')?flood(board,magSet,st.color):null;
       await animMoves(st.moves,st.color,magSet,...(pre?(lvl>0?[pre.size,AFTERSHOCK_MIN,pre]:[pre.size-magSet.size,BURST_MIN,pre]):lvl>0?[0,CHAIN_CATCH||BURST_MIN]:[]));magSet=null}
@@ -674,10 +698,11 @@ async function play(steps,pc){
       for(const k of st.set)rings.push({x:(k%N+.5)*cs,y:((k/N|0)+.5)*cs,t0:wakeT0,dur:420,r0:cs*.35,r1:cs*1.1,col:chainCol(lvl+1),w:cs*.09});
       await sleep(J.WAKE_MS);wake=null;
     }
-    else if(st.type==='polish')await polish(st);
+    else if(st.type==='polish'||st.type==='clean')await polish(st);
     else{
       await burst(st.set,st.level);lvl=st.level;
       if(steps[i+1]&&steps[i+1].type==='polish')await polish(steps[++i]);
+      if(RUSTED_POLISH==='chain'&&steps[i+1]&&steps[i+1].type==='clean')await polish(steps[++i]); // 'restore' cleans after the chain
       await waveFx(tr[st.level]);
     }
   }
@@ -948,6 +973,7 @@ function render(now){
   for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(g[r][c]===RUST){const k=r*N+c,t=rustGrow.get(k);let s=1,al=1;
     if(t!=null){const a=clamp01((now-t)/320);s=.25+.75*easeOutBack(a);al=Math.min(1,a*2);if(a>=1)rustGrow.delete(k)}
     sprDraw(rustSpr((k*7+3)%5,cs),(c+.5)*cs,(r+.5)*cs,cs,s,s,al)}
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(g[r][c]<=RUSTED){const k=r*N+c;cubeAt(RUSTED-g[r][c],(c+.5)*cs,(r+.5)*cs,cs,1,1,1);sprDraw(rustSpr((k*7+3)%5,cs),(c+.5)*cs,(r+.5)*cs,cs,.92,.92,.72)}
   if(jam&&!busy){rr(ctx,0,0,W,W,cs*.14);ctx.fillStyle='rgba(6,7,9,.5)';ctx.fill()}
   // magnet aura: the magnet throbs while it pulls
   if(mag){const pu=.5+.5*Math.sin((now-mag.t0)/55);ctx.globalCompositeOperation='lighter';for(const k of mag.set){const [x,y]=cellC(k);glowAt(lighten(COLS[mag.color],.3),x,y,.22+.22*pu,1.05)}ctx.globalCompositeOperation='source-over'}
@@ -974,8 +1000,8 @@ function render(now){
     if(!any)wipe=null}
   // where rust will creep next
   if(plannedRust.length&&!busy){const pu=.5+.5*Math.sin(now/420);ctx.save();ctx.setLineDash([cs*.11,cs*.08]);ctx.lineDashOffset=-now*.012;ctx.lineWidth=Math.max(1.5,cs*.045);ctx.strokeStyle=`rgba(214,124,58,${.4+.45*pu})`;
-    for(const [r,c] of plannedRust)if(board[r][c]===-1){rr(ctx,c*cs+cs*.13,r*cs+cs*.13,cs*.74,cs*.74,cs*.15);ctx.stroke()}ctx.setLineDash([]);
-    ctx.fillStyle=`rgba(200,105,45,${.25+.35*pu})`;for(const [r,c] of plannedRust)if(board[r][c]===-1)for(const [a,b] of [[.3,.32],[.62,.45],[.42,.66]]){ctx.beginPath();ctx.arc(c*cs+a*cs,r*cs+b*cs,cs*.035,0,7);ctx.fill()}ctx.restore()}
+    for(const [r,c] of plannedRust)if(board[r][c]===-1||RUST_CUBES&&board[r][c]>=0){rr(ctx,c*cs+cs*.13,r*cs+cs*.13,cs*.74,cs*.74,cs*.15);ctx.stroke()}ctx.setLineDash([]);
+    ctx.fillStyle=`rgba(200,105,45,${.25+.35*pu})`;for(const [r,c] of plannedRust)if(board[r][c]===-1||RUST_CUBES&&board[r][c]>=0)for(const [a,b] of [[.3,.32],[.62,.45],[.42,.66]]){ctx.beginPath();ctx.arc(c*cs+a*cs,r*cs+b*cs,cs*.035,0,7);ctx.fill()}ctx.restore()}
   // field lines from straining cubes to where they will land
   if(pending.size){ctx.save();ctx.setLineDash([cs*.08,cs*.12]);ctx.lineDashOffset=-now*.09;ctx.lineWidth=Math.max(1.5,cs*.05);ctx.lineCap='round';
     for(const [k,pd] of pending){if(!pd.dr&&!pd.dc)continue;const [x,y]=cellC(k),tx=(pd.tc+.5)*cs,ty=(pd.tr+.5)*cs;const w=Math.min(1,(now-pd.t0)/250);ctx.strokeStyle=rgba(COLS[pd.color],.0+.55*w);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(tx,ty);ctx.stroke()}
@@ -1216,7 +1242,7 @@ const tlmUrl=()=>new URLSearchParams(location.search).get('telemetry')==='local'
 let tlmOn=LS.get('tlm',null),tlmQ=LS.get('tq',[]),tlmRun=null,tlmDec={t0:0,t1:0,drags:[]},tlmBusy=false,SHAPE_ID=null;
 const tlmId=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
 function tlmDev(){let d=LS.get('dev','');if(!d){d=crypto.randomUUID?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');LS.set('dev',d)}return d}
-const tlmBoard=g=>g.map(r=>r.map(v=>v===-1?'.':v===RUST?'r':String(v)).join('')).join('');
+const tlmBoard=g=>g.map(r=>r.map(v=>v===-1?'.':v===RUST?'r':v<=RUSTED?String.fromCharCode(65+RUSTED-v):String(v)).join('')).join('');
 const tlmTray=t=>{if(!SHAPE_ID)SHAPE_ID=new Map(SHAPES_BLAST.map((sh,i)=>[JSON.stringify(sh),i]));return t.map(p=>p?[SHAPE_ID.get(JSON.stringify(p.cells))??-1,p.color]:null)}; // shape index in SHAPES_BLAST, colour
 const tlmReady=()=>{tlmDec={t0:performance.now(),t1:0,drags:[]}};
 function tlm(t,data){
