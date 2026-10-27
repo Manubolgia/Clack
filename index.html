@@ -52,6 +52,7 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 #stage{flex:1;width:100%;max-width:520px;position:relative;min-height:0}
 canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized in px by layout(), so it is never stretched */
 #cap{position:absolute;left:16px;right:16px;text-align:center;font-size:12px;line-height:1.35;color:var(--ink3);pointer-events:none;transition:opacity .3s}
+#cap.tut{font-size:15px;line-height:1.4;font-weight:650;color:var(--ink);text-shadow:0 2px 6px rgba(0,0,0,.6)}
 #toast{position:absolute;left:50%;top:6px;transform:translate(-50%,-30px);opacity:0;pointer-events:none;padding:7px 14px;border-radius:999px;
   background:rgba(14,16,20,.9);border:1px solid rgba(255,255,255,.1);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;transition:transform .35s cubic-bezier(.2,.9,.3,1.3),opacity .25s;white-space:nowrap}
 #toast.on{transform:translate(-50%,0);opacity:1}
@@ -180,7 +181,7 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
     <div class="row" style="margin-top:8px;align-items:center"><button class="btn ghost" id="stest" style="height:36px;font-size:13px;flex:none;padding:0 14px">Test sound</button><div id="ainfo" style="font-size:11px;color:var(--ink3);line-height:1.35"></div></div>
     <h4>Juice tuning</h4>
     <div id="sliders"></div>
-    <div class="row" style="margin-top:8px"><button class="btn ghost" id="jreset" style="height:40px;font-size:13px">Reset juice</button><button class="btn ghost" id="newrun" style="height:40px;font-size:13px">New run</button></div>
+    <div class="row" style="margin-top:8px"><button class="btn ghost" id="jreset" style="height:40px;font-size:13px">Reset juice</button><button class="btn ghost" id="newrun" style="height:40px;font-size:13px">New run</button><button class="btn ghost" id="howto" style="height:40px;font-size:13px">How to play</button></div>
     <h4>What's new</h4>
     <div id="hist"></div>
     <div id="rulesbox">
@@ -291,7 +292,7 @@ const SHAPES=[
 ];
 const SHAPES_BLAST=[...SHAPES,[[0,0]],[[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]]];
 const curShapes=()=>PIECESET==='blast'?SHAPES_BLAST:SHAPES;
-// rule sets (plan/02 §2.3; ?rules=C7 picks one): each sets every switch in RULE_SW, starting from its default (this app's C5)
+// rule sets (plan/02 §2.3; ?rules=C7 picks one): each sets every switch in RULE_SW, starting from its default (C5; the normal game is GAME)
 const RULE_SW={CHAIN_RULE:[()=>CHAIN_RULE,v=>CHAIN_RULE=v,'touch'],CHAIN_COUNT:[()=>CHAIN_COUNT,v=>CHAIN_COUNT=v,'clump'],CHAIN_CATCH:[()=>CHAIN_CATCH,v=>CHAIN_CATCH=v,0],
   CLUMP_MIN:[()=>CLUMP_MIN,v=>CLUMP_MIN=v,3],CRATER_BLOCK:[()=>CRATER_BLOCK,v=>CRATER_BLOCK=v,true],BURST_MIN:[()=>BURST_MIN,v=>BURST_MIN=v,3],DROP_COUNT:[()=>DROP_COUNT,v=>DROP_COUNT=v,'pull']};
 const RULESETS={
@@ -323,7 +324,28 @@ const DIR_SW={KILL_STYLE:[()=>KILL_STYLE,v=>KILL_STYLE=v],CALM_START:[()=>CALM_S
   RUST_SPREAD:[()=>RUST_SPREAD,v=>RUST_SPREAD=v],RUST_CUBES:[()=>RUST_CUBES,v=>RUST_CUBES=v],RUSTED_LINES:[()=>RUSTED_LINES,v=>RUSTED_LINES=v],
   RUSTED_POLISH:[()=>RUSTED_POLISH,v=>RUSTED_POLISH=v],RUSTED_USED:[()=>RUSTED_USED,v=>RUSTED_USED=v]};
 const DIR_DEF=Object.fromEntries(Object.entries(DIR_SW).map(([k,[get]])=>[k,get()]));
-function applyPlate(id){const P=PLATES[id];if(!P||!applyRules(P.rules))return false;for(const [k,[,set]] of Object.entries(DIR_SW))set(k in P.dir?P.dir[k]:DIR_DEF[k]);return true}
+function applySetup(P){if(!P||!applyRules(P.rules))return false;for(const [k,[,set]] of Object.entries(DIR_SW))set(k in P.dir?P.dir[k]:DIR_DEF[k]);return true}
+function applyPlate(id){return applySetup(PLATES[id])}
+// the normal game (Clank D-015): the owner's pick from the blind test, Everything 4 with its retuned director and the drift kill,
+// exactly plate B. The defaults above stay C5 with Stable C's director, which the lab and the fixtures measure against; the app
+// applies GAME at start unless a test link (?rules=, ?plates=, ?quiz=) picked something else.
+const GAME={rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},src:'C7_tuned'};
+// the tutorial (Settings → How to play, and the first Play on a new phone): fixed scenes played under GAME's rules. Each scene is a
+// board ('.' empty, 'r' rust, 0–4 colour), a tray of [shape index in SHAPES_BLAST, colour] and the planned drops [slot, row, col]
+// with the line shown before each. Here, not with the tutorial's code, so playtest/tests/variants.js can check what each drop does.
+const TUT=[
+  {board:'..0.1.................0...............0..........1...31.11......',tray:[[19,0],[2,0],[1,1]],moves:[
+    [0,2,2,'Drag the red cube onto the outline. Red cubes in its row and column fly to it.'],
+    [1,4,1,'It caught 2. A drop needs to catch 4. Drop the red bar on the outline.'],
+    [2,6,4,'Caught 4: the whole clump blasts. Now the blue piece. Other colours block the pull.']],
+   card:['Chains','The yellow cube kept one blue cube away. Now the best part: when a clump blasts, the cubes touching it blast too if 4 of a colour end up together. Each one is a level higher, up to ×5.']},
+  {board:'4433221144332211......................................00......00',tray:[[8,0],null,null],moves:[
+    [0,2,6,'Drop the red square on the outline and watch.']],
+   card:['Chain ×5','Each blast set off the next: red, blue, green, yellow, purple. That is the biggest chain there is.']},
+  {board:'01431.04r2324032r34102.3r0323021r2104304r1...132241012130.432031',tray:[[2,2],[20,4],null],moves:[
+    [0,5,2,'Late in a run the plate fills up. Drop the green bar in the gap.']],
+   card:['Run over','Nothing left in the tray fits anywhere, so the run is over. Keep room for the big pieces. Rust (brown) creeps in from the edges; blasts polish it away.']},
+];
 const DIRS=[[0,1],[0,-1],[1,0],[-1,0]];
 const $=id=>document.getElementById(id);
 const cv=$('c'),ctx=cv.getContext('2d');
@@ -669,7 +691,7 @@ function nextPlate(){let q=LS.get('pq',[]).filter(x=>plateList().includes(x));if
   const id=q.shift();LS.set('pq',q);return id}
 function setPlate(id){curPlate=id&&applyPlate(id)?id:null;document.querySelectorAll('[data-burst]').forEach(e=>e.textContent=BURST_MIN)}
 function newRun(){
-  tlmEnd();recordRun();started=true;
+  tutStop();tlmEnd();recordRun();started=true;
   if(curPlate&&placements)LS.set('rates',[...LS.get('rates',[]),{plate:curPlate,rules:rulesName(),len:placements,score,rate:rateNow,t:Date.now()}].slice(-500));
   rateNow=null;if(plateList().length&&!quiz)setPlate(nextPlate());
   if(board){const now=performance.now(),cells=[];for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(board[r][c]!==-1)cells.push([r,c,board[r][c]]);if(cells.length)wipe={t0:now,cells}}
@@ -682,7 +704,7 @@ function newRun(){
 }
 async function commit(slot,ar,ac){
   const p=tray[slot],res=simulate(board,p,ar,ac);if(!res)return;
-  tlmPlace(slot,ar,ac,res);
+  if(!tut)tlmPlace(slot,ar,ac,res);
   busy=true;skip=false;combo=0;seqScore0=score;
   undoSnap={board:copy(board),tray:tray.slice(),score,placements};
   tray[slot]=null;placements++;applyLevel();
@@ -691,8 +713,8 @@ async function commit(slot,ar,ac){
   dropFx(res.pc,p.color);
   log(`Caught ${res.n}/${BURST_MIN}`+(res.n<BURST_MIN?' → piece cools into cubes':res.level>1?` → BURST → CHAIN ×${res.level}`:' → BURST'));
   await play(res.steps,res.pc);board=res.g;
-  if(tray.every(x=>!x)){await inflow();tray=dealTray();planBoard();dealFx()}
-  busy=false;skip=false;clearChain();hud();checkJam();save();tlmReady();if(tlmQ.length>=30)tlmFlush();tryReload();
+  if(tray.every(x=>!x)&&!tut){await inflow();tray=dealTray();planBoard();dealFx()}
+  busy=false;skip=false;clearChain();hud();if(tut){tutNext();return}checkJam();save();tlmReady();if(tlmQ.length>=30)tlmFlush();tryReload();
   if(quiz&&quiz.phase==='practice'&&!jam&&placements>=QUIZ_ROUND)quizRoundEnd();
 }
 // filings rain onto random empty cells before each new tray
@@ -843,9 +865,9 @@ function checkJam(quiet){
 }
 function showJam(on){$('jam').classList.toggle('on',on);$('cap').style.opacity=on?0:1}
 function hud(){
-  const best=Math.max(LS.get('best',0),score);LS.set('best',best);
+  const best=Math.max(LS.get('best',0),tut?0:score);LS.set('best',best);
   $('best').textContent=best.toLocaleString()+(curPlate?` · Plate ${curPlate}`:'');
-  if(score>runBest0&&runBest0>0&&!stats.newBest){stats.newBest=true;toast('New best','gold');sfx.best()}
+  if(!tut&&score>runBest0&&runBest0>0&&!stats.newBest){stats.newBest=true;toast('New best','gold');sfx.best()}
   $('rule').textContent=(BOARD_FX==='pulse'&&plannedPulse?`after this tray: ${plannedPulse.toUpperCase()} · `:BOARD_FX==='rust'?`rust ${rustCount()} (+${plannedRust.length} next) · `:'')+(LEVELS_ON?`Lv ${level+1} · catch ${BURST_MIN} · ${NC} colours · `:'')+`rules ${rulesName()} · director: ${rule} · fill ${Math.round(fillPct(board)*100)}% · placements ${placements}`+(inflowNext()?` · next tray +${inflowNext()} cubes`:'');
   $('undo').disabled=undoUsed||!undoSnap||busy;
 }
@@ -1044,6 +1066,9 @@ function render(now){
   if(plannedRust.length&&!busy){const pu=.5+.5*Math.sin(now/420);ctx.save();ctx.setLineDash([cs*.11,cs*.08]);ctx.lineDashOffset=-now*.012;ctx.lineWidth=Math.max(1.5,cs*.045);ctx.strokeStyle=`rgba(214,124,58,${.4+.45*pu})`;
     for(const [r,c] of plannedRust)if(board[r][c]===-1||RUST_CUBES&&board[r][c]>=0){rr(ctx,c*cs+cs*.13,r*cs+cs*.13,cs*.74,cs*.74,cs*.15);ctx.stroke()}ctx.setLineDash([]);
     ctx.fillStyle=`rgba(200,105,45,${.25+.35*pu})`;for(const [r,c] of plannedRust)if(board[r][c]===-1||RUST_CUBES&&board[r][c]>=0)for(const [a,b] of [[.3,.32],[.62,.45],[.42,.66]]){ctx.beginPath();ctx.arc(c*cs+a*cs,r*cs+b*cs,cs*.035,0,7);ctx.fill()}ctx.restore()}
+  // the tutorial's planned drop: the piece, faint, in a pulsing outline
+  if(tut&&tut.go&&!busy&&!drag){const [s,r0,c0]=tutMove(),p=tray[s];if(p){const pu=.5+.5*Math.sin(now/260);ctx.save();ctx.setLineDash([cs*.12,cs*.08]);ctx.lineDashOffset=-now*.03;ctx.lineWidth=Math.max(2,cs*.06);ctx.strokeStyle=`rgba(255,255,255,${.45+.45*pu})`;
+    for(const [a,b] of p.cells){const x=(c0+b+.5)*cs,y=(r0+a+.5)*cs;cubeAt(p.color,x,y,cs,1,1,.18+.12*pu);rr(ctx,x-cs*.44,y-cs*.44,cs*.88,cs*.88,cs*.18);ctx.stroke()}ctx.restore()}}
   // field lines from straining cubes to where they will land
   if(pending.size){ctx.save();ctx.setLineDash([cs*.08,cs*.12]);ctx.lineDashOffset=-now*.09;ctx.lineWidth=Math.max(1.5,cs*.05);ctx.lineCap='round';
     for(const [k,pd] of pending){if(!pd.dr&&!pd.dc)continue;const [x,y]=cellC(k),tx=(pd.tc+.5)*cs,ty=(pd.tr+.5)*cs;const w=Math.min(1,(now-pd.t0)/250);ctx.strokeStyle=rgba(COLS[pd.color],.0+.55*w);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(tx,ty);ctx.stroke()}
@@ -1115,8 +1140,8 @@ function render(now){
   const sw=W/3;
   for(let i=0;i<3;i++){const x0=i*sw;ctx.drawImage(slotSp.c,x0+4-slotSp.pad,trayY-slotSp.pad,sw-8+2*slotSp.pad,TH+2*slotSp.pad);
     const p=tray[i];if(!p||(drag&&drag.slot===i)||(returning&&returning.slot===i))continue;
-    const h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1,a=clamp01((now-trayT0-i*80)/420),e=easeOutBack(a),cx=x0+sw/2,cy=trayY+TH/2+(1-e)*cs*1.3,sc=.55+.45*e,ok=fits(p),al=Math.min(1,a*2.5)*(ok?1:.28);
-    if(ok&&p.hero&&!jam){ctx.globalCompositeOperation='lighter';const pu=.5+.5*Math.sin(now/300);for(const [r,c] of p.cells)glowAt(COLS[p.color],cx+(c-w/2+.5)*ts*sc,cy+(r-h/2+.5)*ts*sc,(.08+.1*pu)*al,ts/cs);ctx.globalCompositeOperation='source-over'}
+    const h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1,a=clamp01((now-trayT0-i*80)/420),e=easeOutBack(a),cx=x0+sw/2,cy=trayY+TH/2+(1-e)*cs*1.3,sc=.55+.45*e,ok=fits(p),next=tut&&tut.go&&i===tutMove()[0],al=Math.min(1,a*2.5)*(ok?1:.28)*(tut&&tut.go&&!next?.3:1);
+    if(ok&&(p.hero||next)&&!jam){ctx.globalCompositeOperation='lighter';const pu=.5+.5*Math.sin(now/300);for(const [r,c] of p.cells)glowAt(COLS[p.color],cx+(c-w/2+.5)*ts*sc,cy+(r-h/2+.5)*ts*sc,(.08+.1*pu)*al,ts/cs);ctx.globalCompositeOperation='source-over'}
     for(const [r,c] of p.cells)cubeAt(p.color,cx+(c-w/2+.5)*ts*sc,cy+(r-h/2+.5)*ts*sc,ts*sc,1,1,al)}
   const slotC=i=>[i*sw+sw/2,trayY+TH/2];
   if(drag&&!drag.res){const p=tray[drag.slot],h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1,a=easeOut(clamp01((now-drag.t0)/150)),[scx,scy]=slotC(drag.slot);
@@ -1168,15 +1193,17 @@ function move(x,y){
   if(drag.res&&(!prev||prev.pc[0][0]!==drag.res.pc[0][0]||prev.pc[0][1]!==drag.res.pc[0][1])){buzz(3);if(drag.res.n>=BURST_MIN&&(!prev||prev.n<BURST_MIN))tone(660+drag.res.level*110,.05,'triangle',.03)}
 }
 cv.addEventListener('pointerdown',e=>{
-  if(quiz&&quiz.phase!=='practice')return;
+  if(quiz&&quiz.phase!=='practice'||tut&&!tut.go)return;
   if(busy){skip=true;return}
   const {x,y}=pos(e);
   if(jam){if(!contUsed&&y>=0&&y<W&&x>=0&&x<W){const r=Math.floor(y/cs),c=Math.floor(x/cs);if(inb(r,c)&&board[r][c]>=0){paintAt={r,c};paintPrev=paintPreview(r,c);const P=paintPrev;tone(700,.05,'triangle',.04);buzz(5);
     $('tinfo').innerHTML=`${P.painted.size} cubes turn this colour · `+(P.clump.size?`clump of ${P.clump.size} blasts${P.chains>1?' + chain':''}`:'no blast (needs 4+ touching)')+` → tray `+(P.ok?'<span class="ok">fits ✓</span>':'<span class="no">still jammed ✗</span>');$('apply').disabled=false}}return}
-  if(y>trayY-cs*.4&&y<trayY+TH+cs*.8&&x>-FM&&x<W+FM){const s=Math.max(0,Math.min(2,Math.floor(x/(W/3))));if(tray[s]){returning=null;drag={slot:s,t0:performance.now(),h:[]};if(!tlmDec.t1)tlmDec.t1=drag.t0;cv.setPointerCapture(e.pointerId);sfx.pick();buzz(5);move(x,y)}}
+  if(y>trayY-cs*.4&&y<trayY+TH+cs*.8&&x>-FM&&x<W+FM){const s=Math.max(0,Math.min(2,Math.floor(x/(W/3))));if(tray[s]&&!(tut&&s!==tutMove()[0])){returning=null;drag={slot:s,t0:performance.now(),h:[]};if(!tlmDec.t1)tlmDec.t1=drag.t0;cv.setPointerCapture(e.pointerId);sfx.pick();buzz(5);move(x,y)}}
 });
 cv.addEventListener('pointermove',e=>{if(drag){const {x,y}=pos(e);move(x,y)}});
-function release(){if(!drag)return;const d=drag;drag=null;if(tlmDec.drags.length<30)tlmDec.drags.push({s:d.slot,ms:Math.round(performance.now()-d.t0),h:d.h||[],ok:d.res?1:0});if(d.res)commit(d.slot,d.ar,d.ac);else{const p=tray[d.slot],h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1;returning={slot:d.slot,x:d.px+w*cs/2,y:d.py+h*cs/2,t0:performance.now()};sfx.deny()}}
+function release(){if(!drag)return;const d=drag;drag=null;if(tlmDec.drags.length<30)tlmDec.drags.push({s:d.slot,ms:Math.round(performance.now()-d.t0),h:d.h||[],ok:d.res?1:0});
+  const m=tut&&tutMove(),off=m&&d.res&&(d.ar!==m[1]||d.ac!==m[2]);if(off)toast('Drop it on the outline');
+  if(d.res&&!off)commit(d.slot,d.ar,d.ac);else{const p=tray[d.slot],h=Math.max(...p.cells.map(c=>c[0]))+1,w=Math.max(...p.cells.map(c=>c[1]))+1;returning={slot:d.slot,x:d.px+w*cs/2,y:d.py+h*cs/2,t0:performance.now()};sfx.deny()}}
 cv.addEventListener('pointerup',release);cv.addEventListener('pointercancel',()=>{if(drag){drag.res=null;release()}});
 function doUndo(){
   if(undoUsed||!undoSnap||busy)return;
@@ -1225,8 +1252,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=9;
+const APP_VERSION=10;
 const CHANGES=[
+  [10,'Everything 4, and a tutorial',['The game now plays "Everything 4", the version that won the blind test: a drop must catch 4 cubes to blast, and cubes touching a blast blast too when 4 of a colour end up together. Runs end on their own now, like in the real game.','A one-minute tutorial: three guided drops, a ×5 chain and how a run ends. It starts on the first Play on a new phone; Settings → How to play shows it again.','A run in progress under the old rules can\'t continue, so a new one starts.']],
   [9,'Test plates and a quiz',['Test links can set up "plates": rule sets being compared, each with its own pacing. On a plate, runs end on their own like in the real game, and the results card asks three quick 1–5 ratings.','A 10-minute quiz for people new to the game, opened from a link: three short practice rounds, then guess what a drop will do.','Nothing changes in the normal game.']],
   [8,'Rust polish scores, play data',['The score now adds 5 points for each rust cell a blast polishes away. It was always in the rules but never shown.','The title screen asks once whether you want to share anonymous play data (your moves and scores, nothing personal) to help tune the game. You can change your answer in Settings.']],
   [7,'Rule sets for testing',['Settings → Rules for testing has a "Rule set" row to try the rule ideas being compared (C5 is the game you know). A test link can also pick one.','Groundwork for sharing anonymous play data. It stays off, and the game will ask first once it is switched on.']],
@@ -1274,7 +1302,7 @@ $('gear').onclick=()=>{hud();toggles();audioInfo();$('jam').classList.remove('on
 $('setclose').onclick=closeSet;
 
 // ---- save and resume: the run survives closing the app and updates ----
-function save(){if(!board||busy||quiz)return;LS.set('run',{v:1,rules:rulesName(),plate:curPlate||'',tlm:tlmRun,board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
+function save(){if(!board||busy||quiz||tut)return;LS.set('run',{v:1,rules:rulesName(),plate:curPlate||'',tlm:tlmRun,board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
 function load(){
   const s=LS.get('run',null);if(!s||s.v!==1||!Array.isArray(s.board)||s.board.length!==N||!Array.isArray(s.tray))return false;
   if((s.plate||'')!==(curPlate||'')||plateList().length&&!s.plate||(s.rules||'C5')!==rulesName())return false;
@@ -1282,6 +1310,7 @@ function load(){
   stats=stats||{blasted:0,maxChain:0,newBest:false};plannedRust=plannedRust||[];started=true;dispScore=score;
   tlmRun=s.tlm||{id:tlmId(),resumes:0};tlmRun.resumes++;tlmReady();return true;
 }
+function resume(){if(!load())return false;jam=false;$('score').textContent=score.toLocaleString();hud();trayT0=performance.now();if(!tray.some(p=>p&&fits(p)))checkJam(true);log(placements?'Run resumed.':`Drag a piece onto the plate. Catch ${BURST_MIN} of its colour to blast.`);return true}
 addEventListener('pagehide',()=>{save();tlmFlush(true)});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){save();tlmFlush(true)}});
 
@@ -1396,6 +1425,39 @@ function quizDone(){
   $('qplay').onclick=()=>{LS.set('quiz',null);location.href=location.pathname};
 }
 
+// ---- tutorial (Clank D-015): three planned drops, one big chain and a loss, the scenes in TUT, played under GAME's rules ----
+// Shown on the first Play on a phone that has never played, from Settings → How to play, and with ?tutorial. It never reaches
+// play data, the best score or the saved run; the run in progress comes back when it ends.
+let tut=null;
+const tutMove=()=>tut&&TUT[tut.part].moves[tut.k];
+const tutDue=()=>{const t=LS.get('tut',null);return !quiz&&!plateList().length&&(t===0||t===null&&!LS.get('runs',0)&&placements===0)};
+function tutBegin(){
+  if(busy)return;save();
+  tut={part:0,k:0,go:false,rules:ruleValues()};applyRules(GAME.rules);
+  quizCard(`<h2>How to play</h2><p>Three quick drops, one big chain, and how a run ends. About a minute.</p><div class="row"><button class="btn" id="qskip">Skip</button><button class="btn hot" id="qgo">Start</button></div>`);
+  $('qgo').onclick=()=>{unlockAudio();tutScene()};$('qskip').onclick=tutEnd;
+}
+function tutScene(){
+  const S=TUT[tut.part];quizHide();tut.k=0;tut.go=true;
+  board=quizBoard(S.board);tray=S.tray.map(x=>x&&{cells:SHAPES_BLAST[x[0]],color:x[1]});
+  score=0;placements=0;plannedRust=[];undoSnap=null;undoUsed=true;contUsed=true;jam=false;paintAt=paintPrev=null;showJam(false);
+  counters=[];chainText='';dispScore=0;$('score').textContent='0';dealFx();hud();tutSay();
+}
+function tutSay(){$('cap').classList.add('tut');log(tutMove()[3])}
+// a planned drop has played out: the next line, or the scene's card (the last scene ends jammed)
+function tutNext(){
+  const S=TUT[tut.part],last=tut.part===TUT.length-1;tut.k++;
+  if(tut.k<S.moves.length){tutSay();return}
+  tut.go=false;$('cap').classList.remove('tut');log('');
+  if(last){jam=true;jamT0=performance.now();sfx.jam();buzz([20,50,30])}
+  setTimeout(()=>{if(!tut)return;
+    quizCard(`<h2>${S.card[0]}</h2><p>${S.card[1]}</p><button class="btn hot" id="qgo">${last?'Play':'Next'}</button>`);
+    $('qgo').onclick=last?tutEnd:()=>{tut.part++;tutScene()}},last?1500:1000);
+}
+function tutStop(){if(!tut)return;const v=tut.rules;tut=null;for(const [k,[,set]] of Object.entries(RULE_SW))set(v[k]);quizHide();$('cap').classList.remove('tut');jam=false}
+function tutEnd(){LS.set('tut',1);tutStop();if(!resume())newRun()}
+$('howto').onclick=()=>{if(busy)return;closeSet();tutBegin()};
+
 // ---- start ----
 // rule set: ?rules=C7 picks one and the app remembers it, because an installed app opens without the query; ?rules=default goes back.
 // While a rule set comes from a link (blind tests, "Plate A/B/C"), Settings hides the rules unless the link also has ?debug.
@@ -1405,23 +1467,25 @@ const QS=new URLSearchParams(location.search),DEBUG=QS.has('debug');
   const z=LS.get('quiz',null);if(z&&QUIZ[z.rules]&&z.phase!=='done'){quiz=z;applyRules(z.rules)}}
 {const q=QS.get('plates');if(q!=null){LS.set('plates',q.split(',').filter(x=>PLATES[x]).join(','));LS.set('pq',[])}
   const s=LS.get('run',null);if(!quiz&&s&&plateList().includes(s.plate))setPlate(s.plate)} // else newRun() deals the next plate
+if(!LS.get('rules','')&&!quiz&&!plateList().length)applySetup(GAME);
+if(QS.has('tutorial'))LS.set('tut',0);
 $('rulesbox').hidden=(!!LS.get('rules','')||plateList().length>0||!!quiz)&&!DEBUG;
 document.querySelectorAll('[data-burst]').forEach(e=>e.textContent=BURST_MIN);
 knobs();sliders();toggles();layout();
 if(quiz){newRun();$('title').classList.add('hidden');
   const ph=quiz.phase;if(ph==='new'||ph==='intro')quizBegin(quiz.rules,quiz.nm);else if(ph==='ask')quizAsk();else if(ph==='between')quizRoundEnd();
   else if(ph==='rule'){quiz.round=3;quizRoundEnd()}else{quiz.round=Math.max(0,quiz.round-1);quizPractice()}}
-else if(load()){$('score').textContent=score.toLocaleString();hud();trayT0=performance.now();if(!tray.some(p=>p&&fits(p)))checkJam(true);log('Run resumed.')}else newRun();
+else if(!resume())newRun();
 tlmFlush();
 requestAnimationFrame(frame);
 {let skipTitle=false;try{skipTitle=sessionStorage.getItem('clack_skipTitle')==='1';sessionStorage.removeItem('clack_skipTitle')}catch(e){}
   const best=LS.get('best',0);$('tbest').textContent=best?`Best ${best.toLocaleString()}`:'';$('play').textContent=placements>0?'Continue':'Play';
   if(skipTitle)$('title').classList.add('hidden');
-  $('play').onclick=()=>{unlockAudio();$('title').classList.add('hidden');dealFx();buzz(10);tlmReady()};}
+  $('play').onclick=()=>{unlockAudio();$('title').classList.add('hidden');if(tutDue())tutBegin();else{dealFx();buzz(10);tlmReady()}};}
 
 // ---- offline + installable, and installed copies update themselves ----
 // a new version activates in the background; the page reloads at the next calm moment and the saved run resumes
-function tryReload(){if(!pendingReload)return;if(busy||drag||$('set').classList.contains('on')||quiz&&quiz.phase!=='done'){setTimeout(tryReload,800);return}save();try{sessionStorage.setItem('clack_skipTitle',$('title').classList.contains('hidden')?'1':'0')}catch(e){}location.reload()}
+function tryReload(){if(!pendingReload)return;if(busy||drag||tut||$('set').classList.contains('on')||quiz&&quiz.phase!=='done'){setTimeout(tryReload,800);return}save();try{sessionStorage.setItem('clack_skipTitle',$('title').classList.contains('hidden')?'1':'0')}catch(e){}location.reload()}
 if('serviceWorker' in navigator){
   let hadCtrl=!!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!hadCtrl){hadCtrl=true;return}pendingReload=true;tryReload()});
