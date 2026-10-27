@@ -309,12 +309,13 @@ function applyRules(name){const R=RULESETS[name];if(!R)return false;for(const [k
 // the rule set the switches match right now ('custom' after a manual switch in Settings)
 function rulesName(){const v=ruleValues();for(const [n,R] of Object.entries(RULESETS))if(Object.entries(RULE_SW).every(([k,[,,def]])=>v[k]===(k in R?R[k]:def)))return n;return 'custom'}
 // plates (Clank plan/02 §2.5a): a finalist rule set with its retuned director and the drift kill, so runs end as they would in the
-// game. ?plates=A,B,C rotates them run by run in shuffled blocks (each block plays every plate once); ?plates=A plays one; ?plates=off
+// game. ?plates=A,B,C,D rotates them run by run in shuffled blocks (each block plays every plate once); ?plates=A plays one; ?plates=off
 // stops. While plates are on, the app names only the plate letter (Settings shows the rules with ?debug). src: the lab variant it copies.
-const PLATES={ // Stage 2 finalists (Clank plan/stage2_recommendation.md), letters drawn at random
-  A:{rules:'C5',dir:{KILL_STYLE:'drift',CALM_START:6,TIGHT:34,RESCUE_COOLDOWN:1,RUST_CHARGE:2,DRIFT_START:15,DRIFT_LEN:100,DRIFT_SLOPE:.75,DRIFT_CAP:.9},src:'C5_tuned'},
+const PLATES={ // Stage 2: the two finalists, the control and the rust plate (Clank plan/stage2_recommendation.md), letters drawn at random
+  A:{rules:'S',dir:{KILL_STYLE:'drift'},src:'rules_S'},
   B:{rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},src:'C7_tuned'},
-  C:{rules:'S',dir:{KILL_STYLE:'drift'},src:'rules_S'},
+  C:{rules:'C5',dir:{KILL_STYLE:'drift',CALM_START:6,TIGHT:34,RESCUE_COOLDOWN:1,RUST_CHARGE:2,DRIFT_START:15,DRIFT_LEN:100,DRIFT_SLOPE:.75,DRIFT_CAP:.9},src:'C5_tuned'},
+  D:{rules:'S',dir:{KILL_STYLE:'drift',CALM_START:12,TIGHT:36,RESCUE_COOLDOWN:6,RUST_CHARGE:4,DRIFT_START:70,DRIFT_LEN:40,DRIFT_SLOPE:.75,DRIFT_CAP:.9},src:'R1b_S_tuned'},
 };
 const DIR_SW={KILL_STYLE:[()=>KILL_STYLE,v=>KILL_STYLE=v],CALM_START:[()=>CALM_START,v=>CALM_START=v],TIGHT:[()=>TIGHT,v=>TIGHT=v],RESCUE_COOLDOWN:[()=>RESCUE_COOLDOWN,v=>RESCUE_COOLDOWN=v],
   DRIFT_START:[()=>DRIFT_START,v=>DRIFT_START=v],DRIFT_LEN:[()=>DRIFT_LEN,v=>DRIFT_LEN=v],DRIFT_SLOPE:[()=>DRIFT_SLOPE,v=>DRIFT_SLOPE=v],DRIFT_CAP:[()=>DRIFT_CAP,v=>DRIFT_CAP=v],
