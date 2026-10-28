@@ -230,6 +230,7 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
     <button id="again" class="btn hot">Play again</button>
   </div>
 </div>
+<script src="director.js"></script>
 <script>
 // ---- tuning ----
 const N=8, COLS=['#e5533c','#2f7ee6','#26b36a','#f2b630','#9a5ce6','#1fb8c4'];
@@ -317,6 +318,9 @@ const PLATES={ // Stage 2: the two finalists, the control and the rust plate (Cl
   B:{rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},src:'C7_tuned'},
   C:{rules:'C5',dir:{KILL_STYLE:'drift',CALM_START:6,TIGHT:34,RESCUE_COOLDOWN:1,RUST_CHARGE:2,DRIFT_START:15,DRIFT_LEN:100,DRIFT_SLOPE:.75,DRIFT_CAP:.9},src:'C5_tuned'},
   D:{rules:'S',dir:{KILL_STYLE:'drift',CALM_START:12,TIGHT:36,RESCUE_COOLDOWN:6,RUST_CHARGE:4,DRIFT_START:70,DRIFT_LEN:40,DRIFT_SLOPE:.75,DRIFT_CAP:.9},src:'R1b_S_tuned'},
+  // Stage 4 (Clank plan/04 §4.7 phase 6): the normal game with director v1 and with director v2 (director.js), letters drawn at random
+  E:{rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},src:'game_v1'},
+  F:{rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},director:{name:'v2'},src:'game_v2'},
 };
 const DIR_SW={KILL_STYLE:[()=>KILL_STYLE,v=>KILL_STYLE=v],CALM_START:[()=>CALM_START,v=>CALM_START=v],TIGHT:[()=>TIGHT,v=>TIGHT=v],RESCUE_COOLDOWN:[()=>RESCUE_COOLDOWN,v=>RESCUE_COOLDOWN=v],
   DRIFT_START:[()=>DRIFT_START,v=>DRIFT_START=v],DRIFT_LEN:[()=>DRIFT_LEN,v=>DRIFT_LEN=v],DRIFT_SLOPE:[()=>DRIFT_SLOPE,v=>DRIFT_SLOPE=v],DRIFT_CAP:[()=>DRIFT_CAP,v=>DRIFT_CAP=v],
@@ -324,7 +328,7 @@ const DIR_SW={KILL_STYLE:[()=>KILL_STYLE,v=>KILL_STYLE=v],CALM_START:[()=>CALM_S
   RUST_SPREAD:[()=>RUST_SPREAD,v=>RUST_SPREAD=v],RUST_CUBES:[()=>RUST_CUBES,v=>RUST_CUBES=v],RUSTED_LINES:[()=>RUSTED_LINES,v=>RUSTED_LINES=v],
   RUSTED_POLISH:[()=>RUSTED_POLISH,v=>RUSTED_POLISH=v],RUSTED_USED:[()=>RUSTED_USED,v=>RUSTED_USED=v]};
 const DIR_DEF=Object.fromEntries(Object.entries(DIR_SW).map(([k,[get]])=>[k,get()]));
-function applySetup(P){if(!P||!applyRules(P.rules))return false;for(const [k,[,set]] of Object.entries(DIR_SW))set(k in P.dir?P.dir[k]:DIR_DEF[k]);return true}
+function applySetup(P){if(!P||P.director&&typeof CLACK_DIRECTORS==='undefined'||!applyRules(P.rules))return false;for(const [k,[,set]] of Object.entries(DIR_SW))set(k in P.dir?P.dir[k]:DIR_DEF[k]);useDirector(P.director);return true}
 function applyPlate(id){return applySetup(PLATES[id])}
 // the normal game (Clank D-015): the owner's pick from the blind test, Everything 4 with its retuned director and the drift kill,
 // exactly plate B. The defaults above stay C5 with Stable C's director, which the lab and the fixtures measure against; the app
@@ -518,7 +522,7 @@ function rustPlan(k){const out=[];if(k<=0)return out;let have=board.flat().filte
       if(!pick)break;taken.add(pick[0]*N+pick[1]);out.push(pick)}
     return out}
   for(const [r,c] of RING_ORDER){if(out.length>=k||have+out.length>=RUST_MAX)break;if(open(r,c))out.push([r,c])}return out}
-function planBoard(){plannedPulse=BOARD_FX==='pulse'?choosePulse():null;plannedRust=BOARD_FX==='rust'?rustPlan(rustAmount()):[]}
+function planBoard(){plannedPulse=BOARD_FX==='pulse'?choosePulse():null;plannedRust=BOARD_FX==='rust'?rustPlan(dir2?dir2.rustAmount(dirState()):rustAmount()):[]}
 function boardFx(){
   const out={moves:[],rust:[],pulse:plannedPulse};
   if(BOARD_FX==='pulse'&&plannedPulse&&plannedPulse!=='calm'){const ps=pulseSim(board,plannedPulse);board=ps.g;out.moves=ps.moves}
@@ -532,7 +536,21 @@ function bestCatch(g,p){let best=-1;for(let r=0;r<N;r++)for(let c=0;c<N;c++){con
 // most cubes one placement of this piece can clear (blast + chain), -1 if it does not fit
 function bestClear(g,p){const f=filledN(g)+p.cells.length;let best=-1;for(let r=0;r<N;r++)for(let c=0;c<N;c++){const x=simulate(g,p,r,c);if(x)best=Math.max(best,f-filledN(x.g))}return best}
 function randPiece(big=false){const S=curShapes();let s;do{s=S[rnd(S.length)]}while(big?s.length<4&&Math.random()<0.5:s.length>4&&Math.random()<0.6);return {cells:s,color:rnd(NC)}}
+// a director from director.js (Clank lab/director, bundled by lab/director/bundle.js), for setups that name one (plate F: v2).
+// It deals every tray and plans the rust amount; the rest of the director code above stays v1's. Its state goes in the save
+// and in the undo snapshot. null: v1, the code above.
+let dir2=null;
+const dirState=()=>({board,placements,trays});
+function useDirector(spec){
+  dir2=null;if(!spec)return;const {name,...own}=spec;
+  const R={N,NC,BURST_MIN,shapes:curShapes(),random:()=>Math.random(),fits,canPut,simulate,place,flood,bestCatch,bestClear,mobility,usedN,filledN};
+  dir2=CLACK_DIRECTORS[name](R,{DIRECTOR,RHYTHM,KILL_STYLE,CALM_START,TIGHT,RESCUE_COOLDOWN,DRIFT_START,DRIFT_LEN,DRIFT_SLOPE,DRIFT_CAP,RUST_RATE,RUST_CHARGE,RUST_CALM,RUST_OPEN,BOARD_FX,...own});
+}
+// every drop, before it is resolved (the director's skill tracker)
+function dirObserve(slot,r,c){if(dir2&&dir2.observe)dir2.observe({...dirState(),tray},slot,r,c)}
+const dirK=()=>dir2?dir2.info(dirState()).k:driftK();
 function dealTray(){
+  if(dir2){const tr=dir2.deal(dirState());rule=dir2.info(dirState()).rule;return tr}
   const tr=dealTray0(),k=driftK();
   if(k>0)for(const p of tr)if(!p.hero&&Math.random()<Math.min(DRIFT_CAP,DRIFT_SLOPE*k))p.color=dudColour(p);
   return tr;
@@ -699,14 +717,15 @@ function newRun(){
   score=0;placements=0;trays=0;cooldown=0;killStart=-1;level=-1;applyLevel();banner='';runStart=Date.now();undoSnap=null;undoUsed=false;contUsed=false;jam=false;paintAt=paintPrev=null;
   stats={blasted:0,maxChain:0,newBest:false};runBest0=LS.get('best',0);dispScore=0;
   flying=[];pending.clear();rustGrow.clear();strain.clear();touchGlow.clear();counter=null;counters=[];mag=null;charge=null;chainText='';heatT=0;
-  tray=dealTray();planBoard();showJam(false);dealFx();tlmStart();hud();save();
+  if(dir2)dir2.newRun();tray=dealTray();planBoard();showJam(false);dealFx();tlmStart();hud();save();
   log(`Drag a piece onto the plate. Catch ${BURST_MIN} of its colour to blast.`);
 }
 async function commit(slot,ar,ac){
   const p=tray[slot],res=simulate(board,p,ar,ac);if(!res)return;
   if(!tut)tlmPlace(slot,ar,ac,res);
   busy=true;skip=false;combo=0;seqScore0=score;
-  undoSnap={board:copy(board),tray:tray.slice(),score,placements};
+  undoSnap={board:copy(board),tray:tray.slice(),score,placements,dir:dir2?dir2.save():null};
+  if(!tut)dirObserve(slot,ar,ac);
   tray[slot]=null;placements++;applyLevel();
   const now=performance.now();
   for(const [r,c] of res.pc){board[r][c]=p.color;pops.push({k:r*N+c,t0:now,dr:0,dc:0})}
@@ -1208,7 +1227,7 @@ cv.addEventListener('pointerup',release);cv.addEventListener('pointercancel',()=
 function doUndo(){
   if(undoUsed||!undoSnap||busy)return;
   tlm('u',{i:placements});
-  board=undoSnap.board;tray=undoSnap.tray;score=undoSnap.score;placements=undoSnap.placements;dispScore=score;
+  board=undoSnap.board;tray=undoSnap.tray;score=undoSnap.score;placements=undoSnap.placements;dispScore=score;if(dir2&&undoSnap.dir)dir2.load(undoSnap.dir);
   undoUsed=true;jam=false;paintAt=paintPrev=null;level=-1;applyLevel();banner='';showJam(false);dealFx();toast('Undo used');log('Undo used (1 per run).');hud();save();tlmReady();
 }
 $('undo').onclick=doUndo;$('jundo').onclick=doUndo;
@@ -1252,8 +1271,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=10;
+const APP_VERSION=11;
 const CHANGES=[
+  [11,'A new dealer to test',['A test link can now rotate two plates that deal the pieces in different ways. The normal game is unchanged.']],
   [10,'Everything 4, and a tutorial',['The game now plays "Everything 4", the version that won the blind test: a drop must catch 4 cubes to blast, and cubes touching a blast blast too when 4 of a colour end up together. Runs end on their own now, like in the real game.','A one-minute tutorial: three guided drops, a ×5 chain and how a run ends. It starts on the first Play on a new phone; Settings → How to play shows it again.','A run in progress under the old rules can\'t continue, so a new one starts.']],
   [9,'Test plates and a quiz',['Test links can set up "plates": rule sets being compared, each with its own pacing. On a plate, runs end on their own like in the real game, and the results card asks three quick 1–5 ratings.','A 10-minute quiz for people new to the game, opened from a link: three short practice rounds, then guess what a drop will do.','Nothing changes in the normal game.']],
   [8,'Rust polish scores, play data',['The score now adds 5 points for each rust cell a blast polishes away. It was always in the rules but never shown.','The title screen asks once whether you want to share anonymous play data (your moves and scores, nothing personal) to help tune the game. You can change your answer in Settings.']],
@@ -1302,12 +1322,12 @@ $('gear').onclick=()=>{hud();toggles();audioInfo();$('jam').classList.remove('on
 $('setclose').onclick=closeSet;
 
 // ---- save and resume: the run survives closing the app and updates ----
-function save(){if(!board||busy||quiz||tut)return;LS.set('run',{v:1,rules:rulesName(),plate:curPlate||'',tlm:tlmRun,board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0})}
+function save(){if(!board||busy||quiz||tut)return;LS.set('run',{v:1,rules:rulesName(),plate:curPlate||'',tlm:tlmRun,board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0,dir:dir2?dir2.save():null})}
 function load(){
   const s=LS.get('run',null);if(!s||s.v!==1||!Array.isArray(s.board)||s.board.length!==N||!Array.isArray(s.tray))return false;
-  if((s.plate||'')!==(curPlate||'')||plateList().length&&!s.plate||(s.rules||'C5')!==rulesName())return false;
+  if((s.plate||'')!==(curPlate||'')||plateList().length&&!s.plate||(s.rules||'C5')!==rulesName()||!!dir2!==!!s.dir)return false;
   ({board,tray,score,placements,trays,cooldown,plannedRust,undoSnap,undoUsed,contUsed,rule,lastRescue,runStart,stats,runBest0}=s);
-  stats=stats||{blasted:0,maxChain:0,newBest:false};plannedRust=plannedRust||[];started=true;dispScore=score;
+  stats=stats||{blasted:0,maxChain:0,newBest:false};plannedRust=plannedRust||[];started=true;dispScore=score;if(dir2)dir2.load(s.dir);
   tlmRun=s.tlm||{id:tlmId(),resumes:0};tlmRun.resumes++;tlmReady();return true;
 }
 function resume(){if(!load())return false;jam=false;$('score').textContent=score.toLocaleString();hud();trayT0=performance.now();if(!tray.some(p=>p&&fits(p)))checkJam(true);log(placements?'Run resumed.':`Drag a piece onto the plate. Catch ${BURST_MIN} of its colour to blast.`);return true}
@@ -1344,7 +1364,7 @@ function tlmS(){tlm('s',{rules:rulesName(),plate:curPlate||null,quiz:quiz?1:0,sw
 function tlmStart(){tlmRun={id:tlmId(),resumes:0};tlmS();tlmReady();tlmFlush()}
 function tlmEnd(){if(!tlmRun||!placements)return;tlm('e',{len:placements,score,plate:curPlate||null,rate:rateNow&&Object.keys(rateNow).length?rateNow:null,best:LS.get('best',0),end:jam?'jam':'quit',paint:contUsed?1:0,undo:undoUsed?1:0,resumes:tlmRun.resumes,secs:Math.round((Date.now()-runStart)/1000)});tlmFlush()}
 // one drop: the board and tray it was made from, what the player picked up and hovered first, and what happened
-function tlmPlace(slot,r,c,res){tlm('p',{i:placements+1,tr:trays,rule,k:+driftK().toFixed(3),rules:rulesName(),board:tlmBoard(board),tray:tlmTray(tray),slot,r,c,
+function tlmPlace(slot,r,c,res){tlm('p',{i:placements+1,tr:trays,rule,k:+dirK().toFixed(3),rules:rulesName(),board:tlmBoard(board),tray:tlmTray(tray),slot,r,c,
   think:tlmDec.t1?Math.round(tlmDec.t1-tlmDec.t0):null,ms:Math.round(performance.now()-tlmDec.t0),drags:tlmDec.drags,caught:res.caught,n:res.n,lvl:res.level,gain:res.gain})}
 function tlmUi(){const can=!!tlmUrl();$('tlmask').hidden=!can||tlmOn!==null;$('ttlm').style.display=can?'':'none';$('ttlm').setAttribute('aria-pressed',!!tlmOn)}
 $('tlmyes').onclick=()=>{tlmOn=true;LS.set('tlm',true);tlmUi();if(placements===0)tlmS();tlmFlush()};
