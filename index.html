@@ -724,7 +724,8 @@ async function commit(slot,ar,ac){
   const p=tray[slot],res=simulate(board,p,ar,ac);if(!res)return;
   if(!tut)tlmPlace(slot,ar,ac,res);
   busy=true;skip=false;combo=0;seqScore0=score;
-  undoSnap={board:copy(board),tray:tray.slice(),score,placements,dir:dir2?dir2.save():null};
+  // everything the drop and a tray change it ends can touch, so undo puts the run back exactly (Clank D-021)
+  undoSnap={board:copy(board),tray:tray.slice(),score,placements,trays,plannedRust:plannedRust.slice(),plannedPulse,rule,cooldown,lastRescue,dir:dir2?dir2.save():null};
   if(!tut)dirObserve(slot,ar,ac);
   tray[slot]=null;placements++;applyLevel();
   const now=performance.now();
@@ -1227,7 +1228,8 @@ cv.addEventListener('pointerup',release);cv.addEventListener('pointercancel',()=
 function doUndo(){
   if(undoUsed||!undoSnap||busy)return;
   tlm('u',{i:placements});
-  board=undoSnap.board;tray=undoSnap.tray;score=undoSnap.score;placements=undoSnap.placements;dispScore=score;if(dir2&&undoSnap.dir)dir2.load(undoSnap.dir);
+  ({board,tray,score,placements}=undoSnap);dispScore=score;if(dir2&&undoSnap.dir)dir2.load(undoSnap.dir);
+  if('trays' in undoSnap)({trays,plannedRust,plannedPulse,rule,cooldown,lastRescue}=undoSnap); // snapshots saved before v15 lack these
   undoUsed=true;jam=false;paintAt=paintPrev=null;level=-1;applyLevel();banner='';showJam(false);dealFx();toast('Undo used');log('Undo used (1 per run).');hud();save();tlmReady();
 }
 $('undo').onclick=doUndo;$('jundo').onclick=doUndo;
@@ -1271,8 +1273,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=14;
+const APP_VERSION=15;
 const CHANGES=[
+  [15,'Undo puts everything back',['Undo after the last piece of a tray now also takes back the rust that tray change planned, so the plate is exactly as it was.']],
   [14,'The new dealer is the normal game',['The normal game now deals its pieces the way the test plate you rated best did: it reads how you play, crowds the plate, then gives you room, and when a run ends it should feel like your own mistake. The rules are unchanged.','A run in progress on the old dealer can\'t continue, so a new one starts.']],
   [13,'A test plate learns from your play',['The new test plate now uses what it has learned from your recent games. The normal game is unchanged.']],
   [12,'A test plate deals differently',['One of the test plates now deals its pieces in a new way. The normal game is unchanged.']],
