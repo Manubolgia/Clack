@@ -127,14 +127,16 @@ function redStack(G,n=3){const b=G.empty();for(let r=5;r<5+n;r++)b[r][2]=0;retur
 {const G=load();const ok=G.get('applySetup')(G.get('GAME'));
   check('the normal game: GAME applies Everything 4 with director v2',ok&&G.get('rulesName')()==='C7'&&!!G.get('dir2')&&G.get('CALM_START')===24&&G.get('RUST_CUBES')===false);
 }
-// the tutorial: under GAME's rules, each scene's planned drops catch and chain as its lines say, and the last scene ends jammed
+// the tutorial: under GAME's rules, each scene's planned drops catch, chain and polish rust as its lines say, and the last scene
+// ends jammed. Each drop is [caught, level, rust polished].
 {const G=load();if(!G.get('applySetup')(G.get('GAME')))throw new Error('GAME did not apply');const T=G.get('TUT'),SH=G.get('SHAPES_BLAST'),fits=G.get('fits');
   const grid=s=>Array.from({length:8},(_,r)=>[...s.slice(r*8,r*8+8)].map(ch=>ch==='.'?-1:ch==='r'?G.RUST:+ch));
-  const want=[[[2,0],[4,1],[4,1]],[[4,5]],[[0,0]]],got=[];let jammed=null;
+  const want=[[[1,0,0],[3,0,0],[4,1,0]],[[4,5,0]],[[4,1,6]],[[0,0,0]]],got=[];let jammed=null;
   T.forEach((t,i)=>{let b=grid(t.board);const tray=t.tray.map(x=>x&&{cells:SH[x[0]],color:x[1]});
-    got.push(t.moves.map(([s,r,c])=>{const res=tray[s]&&G.simulate(b,tray[s],r,c);if(!res)return null;b=res.g;tray[s]=null;return [res.caught,res.level]}));
+    got.push(t.moves.map(([s,r,c])=>{const res=tray[s]&&G.simulate(b,tray[s],r,c);if(!res)return null;b=res.g;tray[s]=null;
+      return [res.caught,res.level,res.steps.filter(x=>x.type==='polish').reduce((n,x)=>n+x.set.size,0)]}));
     if(i===T.length-1)jammed=!tray.some(p=>p&&fits(p,b))});
-  check('tutorial: every planned drop catches and chains as its line says, and the last scene ends jammed',T.every(t=>/^[.r0-4]{64}$/.test(t.board))&&JSON.stringify(got)===JSON.stringify(want)&&jammed===true,JSON.stringify(got));
+  check('tutorial: every planned drop catches, chains and polishes as its line says, and the last scene ends jammed',T.every(t=>/^[.r0-4]{64}$/.test(t.board))&&JSON.stringify(got)===JSON.stringify(want)&&jammed===true,JSON.stringify(got));
 }
 console.log(fails?`${fails} failed`:'all passed');
 process.exit(fails?1:0);
