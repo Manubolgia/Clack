@@ -179,9 +179,12 @@ canvas{position:absolute;left:0;top:0;touch-action:none;display:block} /* sized 
     <h4>Feel</h4>
     <div class="tgs"><button class="tg" id="tsnd">Sound</button><button class="tg" id="thap">Haptics</button><button class="tg" id="tsym">Colour symbols</button><button class="tg" id="tsil">Sound in silent mode</button><button class="tg" id="ttlm">Share play data</button></div>
     <div class="row" style="margin-top:8px;align-items:center"><button class="btn ghost" id="stest" style="height:36px;font-size:13px;flex:none;padding:0 14px">Test sound</button><div id="ainfo" style="font-size:11px;color:var(--ink3);line-height:1.35"></div></div>
+    <div class="row" style="margin-top:14px"><button class="btn ghost" id="newrun" style="height:40px;font-size:13px">New run</button><button class="btn ghost" id="howto" style="height:40px;font-size:13px">How to play</button></div>
+    <div id="tunebox">
     <h4>Juice tuning</h4>
     <div id="sliders"></div>
-    <div class="row" style="margin-top:8px"><button class="btn ghost" id="jreset" style="height:40px;font-size:13px">Reset juice</button><button class="btn ghost" id="newrun" style="height:40px;font-size:13px">New run</button><button class="btn ghost" id="howto" style="height:40px;font-size:13px">How to play</button></div>
+    <div class="row" style="margin-top:8px"><button class="btn ghost" id="jreset" style="height:40px;font-size:13px">Reset juice</button></div>
+    </div>
     <h4>What's new</h4>
     <div id="hist"></div>
     <div id="rulesbox">
@@ -623,7 +626,7 @@ function traceChain(b0,steps){
   return out;
 }
 
-// ---- juice (all of it is tunable in Settings → Juice tuning; defaults are the prototype's reference values) ----
+// ---- juice (all of it is tunable in Settings → Juice tuning, shown with ?debug; defaults are the prototype's reference values) ----
 // cubes launch one after another, each gap and each flight a bit faster than the last; every impact shakes the plate
 const JUICE_DEF={GAP0:200,GAP_SPEEDUP:.75,GAP_MIN:30,FLY_BASE:70,FLY_PER_CELL:26,FLY_SPEEDUP:.9,FLY_FLOOR:.45,POP_MS:140,POP_SCALE:1.2,SHAKE:1,FLASH_MS:220,BURST_HOLD:160,WAKE_MS:260,SPARKS:7,TREMBLE:1};
 let J={...JUICE_DEF,...LS.get('juice',{})};
@@ -1273,8 +1276,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=15;
+const APP_VERSION=16;
 const CHANGES=[
+  [16,'Simpler settings',['Settings now has just the feel options, New run, How to play and this history. The juice sliders and the rule and director switches were for tuning and are gone; the game plays with its standard feel.']],
   [15,'Undo puts everything back',['Undo after the last piece of a tray now also takes back the rust that tray change planned, so the plate is exactly as it was.']],
   [14,'The new dealer is the normal game',['The normal game now deals its pieces the way the test plate you rated best did: it reads how you play, crowds the plate, then gives you room, and when a run ends it should feel like your own mistake. The rules are unchanged.','A run in progress on the old dealer can\'t continue, so a new one starts.']],
   [13,'A test plate learns from your play',['The new test plate now uses what it has learned from your recent games. The normal game is unchanged.']],
@@ -1486,8 +1490,9 @@ $('howto').onclick=()=>{if(busy)return;closeSet();tutBegin()};
 
 // ---- start ----
 // rule set: ?rules=C7 picks one and the app remembers it, because an installed app opens without the query; ?rules=default goes back.
-// While a rule set comes from a link (blind tests, "Plate A/B/C"), Settings hides the rules unless the link also has ?debug.
+// Settings shows the juice sliders and the rule and director switches only with ?debug; without it the juice is the defaults.
 const QS=new URLSearchParams(location.search),DEBUG=QS.has('debug');
+if(!DEBUG)J={...JUICE_DEF};
 {const q=QS.get('rules');if(q!=null)LS.set('rules',RULESETS[q]?q:'');const r=LS.get('rules','');if(r&&!applyRules(r))LS.set('rules','')}
 {const q=QS.get('quiz');if(q!=null&&QUIZ[q]&&!(LS.get('quiz',null)?.rules===q&&LS.get('quiz',null)?.phase!=='done'))LS.set('quiz',{rules:q,nm:QS.get('nm')==='0'?0:1,phase:'new'});
   const z=LS.get('quiz',null);if(z&&QUIZ[z.rules]&&z.phase!=='done'){quiz=z;applyRules(z.rules)}}
@@ -1495,7 +1500,7 @@ const QS=new URLSearchParams(location.search),DEBUG=QS.has('debug');
   const s=LS.get('run',null);if(!quiz&&s&&plateList().includes(s.plate))setPlate(s.plate)} // else newRun() deals the next plate
 if(!LS.get('rules','')&&!quiz&&!plateList().length)applySetup(GAME);
 if(QS.has('tutorial'))LS.set('tut',0);
-$('rulesbox').hidden=(!!LS.get('rules','')||plateList().length>0||!!quiz)&&!DEBUG;
+$('rulesbox').hidden=$('tunebox').hidden=!DEBUG;
 document.querySelectorAll('[data-burst]').forEach(e=>e.textContent=BURST_MIN);
 knobs();sliders();toggles();layout();
 if(quiz){newRun();$('title').classList.add('hidden');

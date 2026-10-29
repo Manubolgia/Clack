@@ -8,7 +8,7 @@ This build plays the locked rules v1.0 (Clank `CLAUDE.md` §3–4): "Everything 
 
 Look and feel: enamel cubes on a brushed-steel plate, synthesised sound, haptics on Android, a title screen, a results screen, and save and resume (a run survives closing the app). Chains are readable: after every blast, the groups touching it light up; the ones that fall short of 4 together show their count ("3/4 · no chain"), in the drag preview and in the animation. Chains escalate per level (hit-stop, zoom, ladder ×2…×5, rising notes, an end total).
 
-The settings button (top right) has sound, haptics, "sound in silent mode" (iPhone) and colour-symbol toggles, sliders for every juice timing (saved on the device), and the rule switches for testing.
+The settings button (top right) has sound, haptics, "sound in silent mode" (iPhone), colour-symbol and play-data toggles, New run, How to play and the update history. With `?debug` in the link it also shows sliders for every juice timing (saved on the device) and the rule and director switches for testing; without it the game plays the default juice.
 
 ## Put it online (GitHub Pages)
 
@@ -25,11 +25,11 @@ It works offline after the first visit. When you change the game, bump `VERSION`
 
 ## Chain rule
 
-Touching cubes chain when the clump they would blast has 4+ cubes ("4 together", like the paint bomb). The original rule (they must pull 3; their own cubes don't count, so a line of 4 chains when 1 cube touches the blast but not when 2 do) is under Settings → Rules for testing → "Touching cubes chain when".
+Touching cubes chain when the clump they would blast has 4+ cubes ("4 together", like the paint bomb). The original rule (they must pull 3; their own cubes don't count, so a line of 4 chains when 1 cube touches the blast but not when 2 do) is under Settings → Rules for testing → "Touching cubes chain when" (shown with `?debug`).
 
 ## Rule sets for testing
 
-`RULESETS` in `index.html` names the rule sets being compared in the Clank repo's rules workshop: `SC` (Stable C exactly as in the fixtures), `S` (Stable C with the crater fix), `C1`, `C2`, `C4`, `C5` ("4 together", the code's default switches), `C5C6` and `C7` (Everything 4, the normal game). A link like `https://manubolgia.github.io/Clack/?rules=C7` plays that set and the app remembers it, so an installed copy keeps it; `?rules=default` goes back. While a link sets the rules, Settings hides "Rules for testing" so blind testers can't see the variant; add `&debug` to show it. A saved run only resumes under the rule set it was played with.
+`RULESETS` in `index.html` names the rule sets being compared in the Clank repo's rules workshop: `SC` (Stable C exactly as in the fixtures), `S` (Stable C with the crater fix), `C1`, `C2`, `C4`, `C5` ("4 together", the code's default switches), `C5C6` and `C7` (Everything 4, the normal game). A link like `https://manubolgia.github.io/Clack/?rules=C7` plays that set and the app remembers it, so an installed copy keeps it; `?rules=default` goes back. Settings shows "Rules for testing" only when the link has `debug` (for example `?rules=C7&debug`), so players and blind testers don't see it. A saved run only resumes under the rule set it was played with.
 
 ## Play data (opt-in)
 
