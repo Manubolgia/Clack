@@ -1094,9 +1094,9 @@ function render(now){
   if(plannedRust.length&&!busy){const pu=.5+.5*Math.sin(now/420);ctx.save();ctx.setLineDash([cs*.11,cs*.08]);ctx.lineDashOffset=-now*.012;ctx.lineWidth=Math.max(1.5,cs*.045);ctx.strokeStyle=`rgba(214,124,58,${.4+.45*pu})`;
     for(const [r,c] of plannedRust)if(board[r][c]===-1||RUST_CUBES&&board[r][c]>=0){rr(ctx,c*cs+cs*.13,r*cs+cs*.13,cs*.74,cs*.74,cs*.15);ctx.stroke()}ctx.setLineDash([]);
     ctx.fillStyle=`rgba(200,105,45,${.25+.35*pu})`;for(const [r,c] of plannedRust)if(board[r][c]===-1||RUST_CUBES&&board[r][c]>=0)for(const [a,b] of [[.3,.32],[.62,.45],[.42,.66]]){ctx.beginPath();ctx.arc(c*cs+a*cs,r*cs+b*cs,cs*.035,0,7);ctx.fill()}ctx.restore()}
-  // the tutorial's planned drop: the piece, faint, in a pulsing outline
-  if(tut&&tut.go&&!busy&&!drag){const [s,r0,c0]=tutMove(),p=tray[s];if(p){const pu=.5+.5*Math.sin(now/260);ctx.save();ctx.setLineDash([cs*.12,cs*.08]);ctx.lineDashOffset=-now*.03;ctx.lineWidth=Math.max(2,cs*.06);ctx.strokeStyle=`rgba(255,255,255,${.45+.45*pu})`;
-    for(const [a,b] of p.cells){const x=(c0+b+.5)*cs,y=(r0+a+.5)*cs;cubeAt(p.color,x,y,cs,1,1,.18+.12*pu);rr(ctx,x-cs*.44,y-cs*.44,cs*.88,cs*.88,cs*.18);ctx.stroke()}ctx.restore()}}
+  // the tutorial's planned drop: the piece, faint, in a pulsing outline; while dragging, the outline alone
+  if(tut&&tut.go&&!busy){const [s,r0,c0]=tutMove(),p=tray[s];if(p){const pu=.5+.5*Math.sin(now/260);ctx.save();ctx.setLineDash([cs*.12,cs*.08]);ctx.lineDashOffset=-now*.03;ctx.lineWidth=Math.max(2,cs*.06);ctx.strokeStyle=`rgba(255,255,255,${.45+.45*pu})`;
+    for(const [a,b] of p.cells){const x=(c0+b+.5)*cs,y=(r0+a+.5)*cs;if(!drag)cubeAt(p.color,x,y,cs,1,1,.18+.12*pu);rr(ctx,x-cs*.44,y-cs*.44,cs*.88,cs*.88,cs*.18);ctx.stroke()}ctx.restore()}}
   // field lines from straining cubes to where they will land
   if(pending.size){ctx.save();ctx.setLineDash([cs*.08,cs*.12]);ctx.lineDashOffset=-now*.09;ctx.lineWidth=Math.max(1.5,cs*.05);ctx.lineCap='round';
     for(const [k,pd] of pending){if(!pd.dr&&!pd.dc)continue;const [x,y]=cellC(k),tx=(pd.tc+.5)*cs,ty=(pd.tr+.5)*cs;const w=Math.min(1,(now-pd.t0)/250);ctx.strokeStyle=rgba(COLS[pd.color],.0+.55*w);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(tx,ty);ctx.stroke()}
@@ -1281,8 +1281,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=19;
+const APP_VERSION=20;
 const CHANGES=[
+  [20,'Tutorial target stays',['In the tutorial, the dashed outline showing where to drop the piece now stays on the plate while you drag.']],
   [19,'Tidier settings',['The update history in Settings is folded away: tap "What\'s new" to open it.','A drop that catches fewer than 4 now says "no blast" (it used to say "cools").']],
   [18,'A clearer tutorial',['How to play is now four short lessons in simpler words: pulling 1 or 3 cubes does nothing and pulling 4 blasts, how a chain works, how to clear rust, and how a run ends. Settings → How to play shows it again.']],
   [17,'Score reset fix',['Starting a new run (New run, End run or Play again) now shows the score back at 0. Before, the last run\'s score stayed on screen until the next blast.']],
