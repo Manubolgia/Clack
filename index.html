@@ -1271,8 +1271,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=12;
+const APP_VERSION=13;
 const CHANGES=[
+  [13,'A test plate learns from your play',['The new test plate now uses what it has learned from your recent games. The normal game is unchanged.']],
   [12,'A test plate deals differently',['One of the test plates now deals its pieces in a new way. The normal game is unchanged.']],
   [11,'A new dealer to test',['A test link can now rotate two plates that deal the pieces in different ways. The normal game is unchanged.']],
   [10,'Everything 4, and a tutorial',['The game now plays "Everything 4", the version that won the blind test: a drop must catch 4 cubes to blast, and cubes touching a blast blast too when 4 of a colour end up together. Runs end on their own now, like in the real game.','A one-minute tutorial: three guided drops, a ×5 chain and how a run ends. It starts on the first Play on a new phone; Settings → How to play shows it again.','A run in progress under the old rules can\'t continue, so a new one starts.']],
