@@ -2,11 +2,11 @@
 
 A minimal installable web app (PWA) of the CLACK prototype, for friends to playtest.
 
-Drag a piece onto the plate: cubes of its colour in its rows and columns fly in. Catch 3 to blast. Cubes touching a blast become magnets and can set off a chain. Rust creeps in from the edges; blasts polish it away. When you jam, use the paint bomb once per run.
+Drag a piece onto the plate: cubes of its colour in its rows and columns fly in. Catch 4 to blast. Cubes touching a blast blast too when 4 of a colour end up together, which is a chain. Rust creeps in from the edges; blasts polish it away. When you jam, use the paint bomb once per run.
 
-This build: empty start, Block Blast-style pieces (including 1×1 and 3×3), rust on, director on auto with no kill point (it never ends a run on purpose).
+This build plays the locked rules v1.0 (Clank `CLAUDE.md` §3–4): "Everything 4" on an empty start with Block Blast-style pieces (including 1×1 and 3×3) and rust, dealt by director v2 (`director.js`, bundled from the Clank lab), which crowds the plate, gives room, and ends each run gradually.
 
-Look and feel: enamel cubes on a brushed-steel plate, synthesised sound, haptics on Android, a title screen, a results screen, and save and resume (a run survives closing the app). Chains are readable: after every blast, the groups touching it light up; the ones that can't catch 3 of their colour show their count ("1/3 · no chain"), in the drag preview and in the animation. Chains escalate per level (hit-stop, zoom, ladder ×2…×5, rising notes, an end total).
+Look and feel: enamel cubes on a brushed-steel plate, synthesised sound, haptics on Android, a title screen, a results screen, and save and resume (a run survives closing the app). Chains are readable: after every blast, the groups touching it light up; the ones that fall short of 4 together show their count ("3/4 · no chain"), in the drag preview and in the animation. Chains escalate per level (hit-stop, zoom, ladder ×2…×5, rising notes, an end total).
 
 The settings button (top right) has sound, haptics, "sound in silent mode" (iPhone) and colour-symbol toggles, sliders for every juice timing (saved on the device), and the rule switches for testing.
 
@@ -29,7 +29,7 @@ Touching cubes chain when the clump they would blast has 4+ cubes ("4 together",
 
 ## Rule sets for testing
 
-`RULESETS` in `index.html` names the rule sets being compared in the Clank repo's rules workshop: `SC` (Stable C exactly as in the fixtures), `S` (Stable C with the crater fix), `C1`, `C2`, `C4`, `C5` (this app's default, "4 together"), `C5C6` and `C7`. A link like `https://manubolgia.github.io/Clack/?rules=C7` plays that set and the app remembers it, so an installed copy keeps it; `?rules=default` goes back. While a link sets the rules, Settings hides "Rules for testing" so blind testers can't see the variant; add `&debug` to show it. A saved run only resumes under the rule set it was played with.
+`RULESETS` in `index.html` names the rule sets being compared in the Clank repo's rules workshop: `SC` (Stable C exactly as in the fixtures), `S` (Stable C with the crater fix), `C1`, `C2`, `C4`, `C5` ("4 together", the code's default switches), `C5C6` and `C7` (Everything 4, the normal game). A link like `https://manubolgia.github.io/Clack/?rules=C7` plays that set and the app remembers it, so an installed copy keeps it; `?rules=default` goes back. While a link sets the rules, Settings hides "Rules for testing" so blind testers can't see the variant; add `&debug` to show it. A saved run only resumes under the rule set it was played with.
 
 ## Play data (opt-in)
 

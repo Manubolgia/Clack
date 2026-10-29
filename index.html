@@ -330,10 +330,10 @@ const DIR_SW={KILL_STYLE:[()=>KILL_STYLE,v=>KILL_STYLE=v],CALM_START:[()=>CALM_S
 const DIR_DEF=Object.fromEntries(Object.entries(DIR_SW).map(([k,[get]])=>[k,get()]));
 function applySetup(P){if(!P||P.director&&typeof CLACK_DIRECTORS==='undefined'||!applyRules(P.rules))return false;for(const [k,[,set]] of Object.entries(DIR_SW))set(k in P.dir?P.dir[k]:DIR_DEF[k]);useDirector(P.director);return true}
 function applyPlate(id){return applySetup(PLATES[id])}
-// the normal game (Clank D-015): the owner's pick from the blind test, Everything 4 with its retuned director and the drift kill,
-// exactly plate B. The defaults above stay C5 with Stable C's director, which the lab and the fixtures measure against; the app
-// applies GAME at start unless a test link (?rules=, ?plates=, ?quiz=) picked something else.
-const GAME={rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},src:'C7_tuned'};
+// the normal game: the locked rules v1.0 (Clank D-020), Everything 4 dealt by director v2 (director.js), exactly plate F. The
+// defaults above stay C5 with Stable C's director, which the lab measures against; the app applies GAME at start unless a test
+// link (?rules=, ?plates=, ?quiz=) picked something else.
+const GAME={rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},director:{name:'v2'},src:'game_v2'};
 // the tutorial (Settings → How to play, and the first Play on a new phone): fixed scenes played under GAME's rules. Each scene is a
 // board ('.' empty, 'r' rust, 0–4 colour), a tray of [shape index in SHAPES_BLAST, colour] and the planned drops [slot, row, col]
 // with the line shown before each. Here, not with the tutorial's code, so playtest/tests/variants.js can check what each drop does.
@@ -1271,8 +1271,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=13;
+const APP_VERSION=14;
 const CHANGES=[
+  [14,'The new dealer is the normal game',['The normal game now deals its pieces the way the test plate you rated best did: it reads how you play, crowds the plate, then gives you room, and when a run ends it should feel like your own mistake. The rules are unchanged.','A run in progress on the old dealer can\'t continue, so a new one starts.']],
   [13,'A test plate learns from your play',['The new test plate now uses what it has learned from your recent games. The normal game is unchanged.']],
   [12,'A test plate deals differently',['One of the test plates now deals its pieces in a new way. The normal game is unchanged.']],
   [11,'A new dealer to test',['A test link can now rotate two plates that deal the pieces in different ways. The normal game is unchanged.']],

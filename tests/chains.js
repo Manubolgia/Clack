@@ -1,9 +1,10 @@
-// Randomised invariant tests for the magnet pull and the chain, under both chain rules. Run: node tests/chains.js (exit code 1 on any failure)
+// Randomised invariant tests for the magnet pull and the chain, under both chain rules and under the normal game's (GAME)
+// rule set, plus the line-of-4 table (Clank CLAUDE.md §3.4.2). Run: node tests/chains.js (exit code 1 on any failure)
 const load=require('./load');
 function rngf(seed){let a=seed;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 const SH=[[[0,0]],[[0,0],[0,1]],[[0,0],[1,0]],[[0,0],[0,1],[0,2]],[[0,0],[1,0],[2,0]],[[0,0],[0,1],[1,0]],[[0,0],[0,1],[1,0],[1,1]],[[0,0],[0,1],[0,2],[0,3]],[[0,1],[1,0],[1,1],[1,2]],[[0,0],[1,0],[2,0],[2,1]],[[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]]];
-function suite(mode,CASES=20000){
-  const G=load();G.set('CHAIN_COUNT',mode);const {simulate,traceChain,copy,flood,pull,N}=G;const MAX=G.get('MAX_CHAIN'),BM=G.get('BURST_MIN'),AM=G.get('AFTERSHOCK_MIN');
+function suite(mode,CASES=20000,rules=null){
+  const G=load();if(rules)G.get('applyRules')(rules);else G.set('CHAIN_COUNT',mode);const {simulate,traceChain,copy,flood,pull,N}=G;const MAX=G.get('MAX_CHAIN'),BM=G.get('BURST_MIN'),AM=G.get('AFTERSHOCK_MIN');
   const R=rngf(mode==='clump'?7:7),fail={replay:0,trace:0,emptyCraterCell:0,gain:0,level:0,determinism:0};
   let blasts=0,chains=0,lv={},waves=0,groups=0,paradox=0,orderLoss=0,orderGain=0,dropQuirk=0,drops=0;const ex={};
   for(let n=0;n<CASES;n++){
@@ -35,7 +36,7 @@ function suite(mode,CASES=20000){
     if(res.caught<BM){const t=copy(b);for(const [r,c] of res.pc)t[r][c]=p.color;pull(t,res.pc,p.color,new Set(res.pc.map(([r,c])=>r*N+c)));if(flood(t,new Set(res.pc.map(([r,c])=>r*N+c)),p.color).size>=4)dropQuirk++}
   }
   const pct=(a,b)=>(100*a/b).toFixed(1)+'%';
-  console.log(`\n=== chain rule: ${mode==='clump'?'4 together (new default)':'pull 3 (original)'} — ${drops} random drops ===`);
+  console.log(`\n=== ${rules?`rule set ${rules} (the normal game)`:`chain rule: ${mode==='clump'?'4 together':'pull 3 (original)'}`} — ${drops} random drops ===`);
   console.log('invariants (all must be 0):',JSON.stringify(fail));
   console.log(`blasting drops: ${pct(blasts,drops)} · chain levels reached: ${Object.entries(lv).filter(([l])=>l>1).map(([l,v])=>'×'+l+' '+v).join(', ')} · drops that chain: ${pct(Object.entries(lv).filter(([l])=>l==2).reduce((s,[,v])=>s+v,0),drops)}`);
   console.log(`touching groups tested: ${groups}; outcome changed by another group in the same wave: lost ${orderLoss} (${pct(orderLoss,groups)}), gained ${orderGain} (${pct(orderGain,groups)})`);
@@ -44,5 +45,15 @@ function suite(mode,CASES=20000){
   if(ex.empty)console.log('example crater with an empty cell at level',ex.empty.level,ex.empty.empt);
   return fail;
 }
-const a=suite('catch'),b=suite('clump');
-process.exit(Object.values(a).concat(Object.values(b)).some(v=>v)?1:0);
+const GAME_RULES=load().get('GAME').rules;
+const a=suite('catch'),b=suite('clump'),c=suite('clump',20000,GAME_RULES);
+// the line-of-4 table: a line of 4 blue cubes with a red blast below the cubes in touch. Under "4 together" every case
+// chains; under the original rule (pull 3, own cubes don't count) only a single touching cube does.
+function lineOf4(rules){
+  const G=load();G.get('applyRules')(rules);const runChain=G.get('runChain');
+  return [[2],[3],[2,3],[2,3,4],[2,3,4,5]].map(cols=>{const g=G.empty();for(let c=2;c<=5;c++)g[2][c]=1;for(const c of cols)g[3][c]=0;
+    return runChain(g,new Set(cols.map(c=>3*8+c)),[]).level});
+}
+const line={S:lineOf4('S'),[GAME_RULES]:lineOf4(GAME_RULES)},lineOk=JSON.stringify(line.S)==='[2,2,1,1,1]'&&JSON.stringify(line[GAME_RULES])==='[2,2,2,2,2]';
+console.log(`\nline of 4, touching an end / a middle cube / 2 / 3 / all 4, chain level: S ${line.S.join(' ')} · ${GAME_RULES} ${line[GAME_RULES].join(' ')} · ${lineOk?'ok':'FAIL'}`);
+process.exit(Object.values(a).concat(Object.values(b),Object.values(c)).some(v=>v)||!lineOk?1:0);
