@@ -718,7 +718,7 @@ function newRun(){
   if(board){const now=performance.now(),cells=[];for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(board[r][c]!==-1)cells.push([r,c,board[r][c]]);if(cells.length)wipe={t0:now,cells}}
   board=empty();let k=0;while(k<START_CUBES){const r=rnd(N),c=rnd(N);if(board[r][c]<0){board[r][c]=rnd(NC);k++}}
   score=0;placements=0;trays=0;cooldown=0;killStart=-1;level=-1;applyLevel();banner='';runStart=Date.now();undoSnap=null;undoUsed=false;contUsed=false;jam=false;paintAt=paintPrev=null;
-  stats={blasted:0,maxChain:0,newBest:false};runBest0=LS.get('best',0);dispScore=0;
+  stats={blasted:0,maxChain:0,newBest:false};runBest0=LS.get('best',0);dispScore=0;$('score').textContent='0';
   flying=[];pending.clear();rustGrow.clear();strain.clear();touchGlow.clear();counter=null;counters=[];mag=null;charge=null;chainText='';heatT=0;
   if(dir2)dir2.newRun();tray=dealTray();planBoard();showJam(false);dealFx();tlmStart();hud();save();
   log(`Drag a piece onto the plate. Catch ${BURST_MIN} of its colour to blast.`);
@@ -1276,8 +1276,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=16;
+const APP_VERSION=17;
 const CHANGES=[
+  [17,'Score reset fix',['Starting a new run (New run, End run or Play again) now shows the score back at 0. Before, the last run\'s score stayed on screen until the next blast.']],
   [16,'Simpler settings',['Settings now has just the feel options, New run, How to play and this history. The juice sliders and the rule and director switches were for tuning and are gone; the game plays with its standard feel.']],
   [15,'Undo puts everything back',['Undo after the last piece of a tray now also takes back the rust that tray change planned, so the plate is exactly as it was.']],
   [14,'The new dealer is the normal game',['The normal game now deals its pieces the way the test plate you rated best did: it reads how you play, crowds the plate, then gives you room, and when a run ends it should feel like your own mistake. The rules are unchanged.','A run in progress on the old dealer can\'t continue, so a new one starts.']],
