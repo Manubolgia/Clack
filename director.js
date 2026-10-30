@@ -339,6 +339,9 @@ module.exports=v1;
 // (U_PEAK_LATE, at late = 1), give more peak trays per loop (PEAK_TRAYS_END), open the peak's used-cells ceiling (PEAK_CEIL_END),
 // cost trays by the most any one piece could clear on this board (DENY, per cube at late = 1; on build and peak trays), draw a
 // harder pool (POOL_END), weigh plausibility less (LAMBDA_END, at late = 1) and plan rust on every tray (RUST_END cells at late = 1, at most that).
+// FEED: trays cost this much at late = 1 per cell of pieces that share a colour with another piece of the tray, on build and peak
+// trays. Big pieces of one colour catch nothing when dealt, so the forecast calls them deadly, but the second pulls the first
+// and the blast chains; a strong player does this at nearly every peak (DECISIONS.md F-027). Trays of 3 colours are 48% of the plain mix.
 // LATE_VET: on a choked board past late 0, the tray is the one that clears the least among those the expert can place, so the
 // last trays stay placeable without being a save; if none is, the run ends on a tray no one could place. CONT_SHIFT moves the
 // window this many placements at each continue (continued()), the same way windowShift does.
@@ -376,7 +379,7 @@ const v1=require('./v1');
 
 const DEFAULTS={ALPHA:.5,REST_TRAYS:5,REST_TRIES:16,BUILD_RATE:4,U_PEAK:30,PEAK_TRAYS:1,PEAK_HOLD:64,S_REST:0,S_BUILD:.9,S_PEAK:.9,S_RELEASE:.95,S_FLOOR:.6,
   TEMP:1,LAMBDA:1,RUST_TRAY:2,RUST_MAX_TRAY:3,COAST_USED:16,COAST_TRAYS:3,BIAS_RATE:.2,
-  EARN:16,FORECAST:'surrogate',ROLLOUTS:16,U_PEAK_END:null,PEAK_CEIL:4,RELEASE_AIM:1,CHOKE_MOB:null,SAVE_MIN_MOB:12,VET_MIN_MOB:12,ENDING:'fair',END_START:32,END_LEN:120,END_SKILL:.5,SKILL_REF:1,S_END:.4,CALIBRATE:true,LATE_START:1,LATE_LEN:.8,U_PEAK_LATE:null,PEAK_TRAYS_END:null,PEAK_CEIL_END:null,DENY:0,POOL_END:null,LAMBDA_END:null,RUST_END:null,LATE_VET:false,CONT_SHIFT:0,POOL:{build:{plain:12,big:4,dud:6,charge:6,match:2,oneColour:2,hero:2},release:{hero:14,match:8,plain:8,big:4}}};
+  EARN:16,FORECAST:'surrogate',ROLLOUTS:16,U_PEAK_END:null,PEAK_CEIL:4,RELEASE_AIM:1,CHOKE_MOB:null,SAVE_MIN_MOB:12,VET_MIN_MOB:12,ENDING:'fair',END_START:32,END_LEN:120,END_SKILL:.5,SKILL_REF:1,S_END:.4,CALIBRATE:true,LATE_START:1,LATE_LEN:.8,U_PEAK_LATE:null,PEAK_TRAYS_END:null,PEAK_CEIL_END:null,DENY:0,POOL_END:null,LAMBDA_END:null,RUST_END:null,FEED:0,LATE_VET:false,CONT_SHIFT:0,POOL:{build:{plain:12,big:4,dud:6,charge:6,match:2,oneColour:2,hero:2},release:{hero:14,match:8,plain:8,big:4}}};
 // how far off a forecast may be before it costs 1 (squared): the surrogate misses used cells by about 2.6 and cleared by 2.3
 const SU=3,SS=.05,SC=3;
 // a hero tray against the plain mix: its hero is the best of 20 pieces (about 20×) and its two others are small (about 2× each)
@@ -454,8 +457,8 @@ function v2(R,K){
   const floor=(s,s0)=>s<s0?((s0-s)/SS)**2:0;
   function cost(ph,f,tg={}){
     if(ph==='rest')return tg.open?0:floor(f.S,C.S_REST);
-    if(ph==='build')return ((f.U-tg.U)/SU)**2+floor(f.S,tg.Sb)-tg.earn*f.E+tg.deny*(f.D||0);
-    if(ph==='peak')return ((f.S-tg.S)/SS)**2+(f.U<tg.U?((tg.U-f.U)/SU)**2:0)+(tg.Ucap!=null&&f.U>tg.Ucap?((f.U-tg.Ucap)/SU)**2:0)+tg.deny*(f.D||0);
+    if(ph==='build')return ((f.U-tg.U)/SU)**2+floor(f.S,tg.Sb)-tg.earn*f.E+tg.deny*(f.D||0)+tg.feed*(f.F||0);
+    if(ph==='peak')return ((f.S-tg.S)/SS)**2+(f.U<tg.U?((tg.U-f.U)/SU)**2:0)+(tg.Ucap!=null&&f.U>tg.Ucap?((f.U-tg.Ucap)/SU)**2:0)+tg.deny*(f.D||0)+tg.feed*(f.F||0);
     return ((f.Cl-tg.C)/SC)**2+floor(f.S,C.S_RELEASE);
   }
   function deal(s){
@@ -510,9 +513,10 @@ function v2(R,K){
     const fall=fair?k:0,tg={U:phase==='peak'?u-C.PEAK_HOLD:Math.min(uPeak+4,u+C.BUILD_RATE*(1+fall)),C:null,
       S:Math.max(0,C.S_PEAK-(C.S_PEAK-C.S_END)*fall),Sb:Math.max(0,C.S_BUILD-(C.S_BUILD-C.S_END)*fall),earn:C.EARN*(1-end),
       // PEAK_CEIL: the peak's forecast used cells cost above uPeak + PEAK_CEIL, so the peak tray can't choke the board (null: no ceiling)
-      Ucap:phase==='peak'&&C.PEAK_CEIL!=null?uPeak+C.PEAK_CEIL+(C.PEAK_CEIL_END==null?0:late*(C.PEAK_CEIL_END-C.PEAK_CEIL)):null,deny:C.DENY*late};
+      Ucap:phase==='peak'&&C.PEAK_CEIL!=null?uPeak+C.PEAK_CEIL+(C.PEAK_CEIL_END==null?0:late*(C.PEAK_CEIL_END-C.PEAK_CEIL)):null,deny:C.DENY*late,feed:C.FEED*late};
     // the most any one piece of the tray could clear on this board
     if(tg.deny>0&&(phase==='build'||phase==='peak'))for(const c of cs)c.f.D=clearOf(c);
+    if(tg.feed>0&&(phase==='build'||phase==='peak'))for(const c of cs)c.f.F=c.t.reduce((a,p,i)=>a+(c.t.some((q,j)=>j!==i&&q.color===p.color)?p.cells.length:0),0);
     // RELEASE_AIM: how far from the least to the most a safe candidate clears the release aims before the ending (1: the most).
     // CHOKE_MOB: on a board where fewer shapes fit, the release aims at the least, since a big save there reads as a gift (null: off)
     if(phase==='release'){const safe=cs.filter(c=>c.f.S>=C.S_RELEASE),cl=(safe.length?safe:cs).map(c=>c.f.Cl),lo=Math.min(...cl),
