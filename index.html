@@ -325,6 +325,9 @@ const PLATES={ // Stage 2: the two finalists, the control and the rust plate (Cl
   // Stage 4 (Clank plan/04 §4.7 phase 6): the normal game with director v1 and with director v2 (director.js), letters drawn at random
   E:{rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},src:'game_v1'},
   F:{rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},director:{name:'v2'},src:'game_v2'},
+  // Stage 5b (Clank plan/05b): the normal game and the late-ending variant, for the owner's blind play, letters drawn at random
+  G:{rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},director:{name:'v2',U_PEAK_LATE:44},src:'game_v2_L_U44'},
+  H:{rules:'C7',dir:{KILL_STYLE:'drift',CALM_START:24,TIGHT:32,RESCUE_COOLDOWN:5,RUST_CHARGE:2,DRIFT_START:30,DRIFT_LEN:170,DRIFT_SLOPE:.75,DRIFT_CAP:.85},director:{name:'v2'},src:'game_v2'},
 };
 const DIR_SW={KILL_STYLE:[()=>KILL_STYLE,v=>KILL_STYLE=v],CALM_START:[()=>CALM_START,v=>CALM_START=v],TIGHT:[()=>TIGHT,v=>TIGHT=v],RESCUE_COOLDOWN:[()=>RESCUE_COOLDOWN,v=>RESCUE_COOLDOWN=v],
   DRIFT_START:[()=>DRIFT_START,v=>DRIFT_START=v],DRIFT_LEN:[()=>DRIFT_LEN,v=>DRIFT_LEN=v],DRIFT_SLOPE:[()=>DRIFT_SLOPE,v=>DRIFT_SLOPE=v],DRIFT_CAP:[()=>DRIFT_CAP,v=>DRIFT_CAP=v],
@@ -1281,8 +1284,9 @@ addEventListener('pageshow',layout);addEventListener('orientationchange',()=>set
 
 // ---- what's new: shown once after each update, full history in Settings ----
 // Keep APP_VERSION equal to VERSION in sw.js, and add an entry here with every update.
-const APP_VERSION=20;
+const APP_VERSION=21;
 const CHANGES=[
+  [21,'Two test plates',['A test link can now rotate two plates that deal the pieces differently late in a long run. The normal game is unchanged.']],
   [20,'Tutorial target stays',['In the tutorial, the dashed outline showing where to drop the piece now stays on the plate while you drag.']],
   [19,'Tidier settings',['The update history in Settings is folded away: tap "What\'s new" to open it.','A drop that catches fewer than 4 now says "no blast" (it used to say "cools").']],
   [18,'A clearer tutorial',['How to play is now four short lessons in simpler words: pulling 1 or 3 cubes does nothing and pulling 4 blasts, how a chain works, how to clear rust, and how a run ends. Settings → How to play shows it again.']],
