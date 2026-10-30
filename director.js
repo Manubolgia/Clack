@@ -334,6 +334,14 @@ module.exports=v1;
 // mostly big blasts, so the check would deal a save, and the tray is the plain mix as v1 deals it. A slow ramp lets skill show, as v1's drift does: the lab's rule bots outplay the skill they are tracked
 // at, so the window can't come from tracked skill alone (DECISIONS.md F-021). END_SKILL scales the window's start by
 // (skill ÷ SKILL_REF)^END_SKILL. endingContext (Stage 9's hook) shifts the window and speeds the ramp; neutral by default.
+// The late ending (Stage 5b, all off by default): past k = LATE_START a second level, late = (k − LATE_START) / LATE_LEN, keeps
+// rising without a limit, since the levers above run out at k = 1.8 (DECISIONS.md F-026). It can raise the peak's threshold
+// (U_PEAK_LATE, at late = 1), give more peak trays per loop (PEAK_TRAYS_END), open the peak's used-cells ceiling (PEAK_CEIL_END),
+// cost trays by the most any one piece could clear on this board (DENY, per cube at late = 1; on build and peak trays), draw a
+// harder pool (POOL_END), weigh plausibility less (LAMBDA_END, at late = 1) and plan rust on every tray (RUST_END cells at late = 1, at most that).
+// LATE_VET: on a choked board past late 0, the tray is the one that clears the least among those the expert can place, so the
+// last trays stay placeable without being a save; if none is, the run ends on a tray no one could place. CONT_SHIFT moves the
+// window this many placements at each continue (continued()), the same way windowShift does.
 // ENDING 'drift' keeps phase 4's ending: after the pick, each piece but a release's hero turns to a dud colour with v1's
 // probability. The forecasts don't see it, as v1's rule doesn't. A dud colour here is any colour the piece can't blast
 // with (v1: the one it catches least with, first on ties), drawn at random and unlike its tray-mates' colours where it can
@@ -368,7 +376,7 @@ const v1=require('./v1');
 
 const DEFAULTS={ALPHA:.5,REST_TRAYS:5,REST_TRIES:16,BUILD_RATE:4,U_PEAK:30,PEAK_TRAYS:1,PEAK_HOLD:64,S_REST:0,S_BUILD:.9,S_PEAK:.9,S_RELEASE:.95,S_FLOOR:.6,
   TEMP:1,LAMBDA:1,RUST_TRAY:2,RUST_MAX_TRAY:3,COAST_USED:16,COAST_TRAYS:3,BIAS_RATE:.2,
-  EARN:16,FORECAST:'surrogate',ROLLOUTS:16,U_PEAK_END:null,PEAK_CEIL:4,RELEASE_AIM:1,CHOKE_MOB:null,SAVE_MIN_MOB:12,VET_MIN_MOB:12,ENDING:'fair',END_START:32,END_LEN:120,END_SKILL:.5,SKILL_REF:1,S_END:.4,CALIBRATE:true,POOL:{build:{plain:12,big:4,dud:6,charge:6,match:2,oneColour:2,hero:2},release:{hero:14,match:8,plain:8,big:4}}};
+  EARN:16,FORECAST:'surrogate',ROLLOUTS:16,U_PEAK_END:null,PEAK_CEIL:4,RELEASE_AIM:1,CHOKE_MOB:null,SAVE_MIN_MOB:12,VET_MIN_MOB:12,ENDING:'fair',END_START:32,END_LEN:120,END_SKILL:.5,SKILL_REF:1,S_END:.4,CALIBRATE:true,LATE_START:1,LATE_LEN:.8,U_PEAK_LATE:null,PEAK_TRAYS_END:null,PEAK_CEIL_END:null,DENY:0,POOL_END:null,LAMBDA_END:null,RUST_END:null,LATE_VET:false,CONT_SHIFT:0,POOL:{build:{plain:12,big:4,dud:6,charge:6,match:2,oneColour:2,hero:2},release:{hero:14,match:8,plain:8,big:4}}};
 // how far off a forecast may be before it costs 1 (squared): the surrogate misses used cells by about 2.6 and cleared by 2.3
 const SU=3,SS=.05,SC=3;
 // a hero tray against the plain mix: its hero is the best of 20 pieces (about 20×) and its two others are small (about 2× each)
@@ -397,10 +405,10 @@ function v2(R,K){
     if(!fair)return {start:K.DRIFT_START,len:K.DRIFT_LEN,on:K.KILL_STYLE==='drift'};
     const skill=tk.beta(),start=C.END_START*(C.END_SKILL?(skill/C.SKILL_REF)**C.END_SKILL:1);
     const {windowShift=0,urgency=0}=ending({placements:s.placements,trays:s.trays,skill,start,len:C.END_LEN,phase})||{};
-    return {start:start+windowShift,len:C.END_LEN/(1+urgency),on:true};
+    return {start:start+windowShift+(contShift||0),len:C.END_LEN/(1+urgency),on:true};
   }
   const levelAt=(w,pl)=>w.on?Math.max(0,(pl-w.start)/w.len):0;
-  let phase,restLeft,peakLeft,coast,last,tk,bias,dealt,win,post;
+  let phase,restLeft,peakLeft,coast,last,tk,bias,dealt,win,post,contShift;
   const calibrated=p=>{if(!C.CALIBRATE||p<=0||p>=1)return p;const z=logit(p);let s=0;for(let i=0;i<OFFSETS.length;i++)s+=post[i]*sig(z+OFFSETS[i]);return s};
   const offset=()=>OFFSETS.reduce((a,c,i)=>a+post[i]*c,0);
 
@@ -446,13 +454,13 @@ function v2(R,K){
   const floor=(s,s0)=>s<s0?((s0-s)/SS)**2:0;
   function cost(ph,f,tg={}){
     if(ph==='rest')return tg.open?0:floor(f.S,C.S_REST);
-    if(ph==='build')return ((f.U-tg.U)/SU)**2+floor(f.S,tg.Sb)-tg.earn*f.E;
-    if(ph==='peak')return ((f.S-tg.S)/SS)**2+(f.U<tg.U?((tg.U-f.U)/SU)**2:0)+(tg.Ucap!=null&&f.U>tg.Ucap?((f.U-tg.Ucap)/SU)**2:0);
+    if(ph==='build')return ((f.U-tg.U)/SU)**2+floor(f.S,tg.Sb)-tg.earn*f.E+tg.deny*(f.D||0);
+    if(ph==='peak')return ((f.S-tg.S)/SS)**2+(f.U<tg.U?((tg.U-f.U)/SU)**2:0)+(tg.Ucap!=null&&f.U>tg.Ucap?((f.U-tg.Ucap)/SU)**2:0)+tg.deny*(f.D||0);
     return ((f.Cl-tg.C)/SC)**2+floor(f.S,C.S_RELEASE);
   }
   function deal(s){
     win=windowAt(s);
-    const g=s.board,u=R.usedN(g),open=s.placements<K.CALM_START,k=levelAt(win,s.placements),end=fair?Math.min(1,k):0;
+    const g=s.board,u=R.usedN(g),open=s.placements<K.CALM_START,k=levelAt(win,s.placements),end=fair?Math.min(1,k):0,late=fair?Math.max(0,(k-C.LATE_START)/C.LATE_LEN):0;
     // VET_MIN_MOB: the expert check applies only on boards where at least this many shapes fit. On a choked board the trays
     // the expert can place in full are mostly the ones that blast big, so the check itself would deal the save (null: always)
     const mob=C.SAVE_MIN_MOB!=null||C.VET_MIN_MOB!=null?R.mobility(g):21,vet=fair&&!open&&!(C.VET_MIN_MOB!=null&&mob<C.VET_MIN_MOB);
@@ -471,18 +479,19 @@ function v2(R,K){
     if(phase==='release'){phase='rest';restLeft=rest}
     if(phase==='rest'&&!open){if(coast>=C.COAST_TRAYS){phase='build';restLeft=0}else if(restLeft>0)restLeft--;else phase='build'}
     // U_PEAK_END: the peak's threshold moves from U_PEAK to it as the ending grows (null: it stays at U_PEAK)
-    const uPeak=C.U_PEAK+(C.U_PEAK_END==null?0:end*(C.U_PEAK_END-C.U_PEAK));
-    if(phase==='build'&&u>=uPeak){phase='peak';peakLeft=C.PEAK_TRAYS}
+    const uPeak=C.U_PEAK+(C.U_PEAK_END==null?0:end*(C.U_PEAK_END-C.U_PEAK))+(C.U_PEAK_LATE==null?0:late*(C.U_PEAK_LATE-C.U_PEAK));
+    if(phase==='build'&&u>=uPeak){phase='peak';peakLeft=C.PEAK_TRAYS_END==null?C.PEAK_TRAYS:Math.round(C.PEAK_TRAYS+late*(C.PEAK_TRAYS_END-C.PEAK_TRAYS))}
     if(phase==='peak'){if(u<uPeak-8){phase='rest';restLeft=Math.max(0,rest-1)}else if(peakLeft>0)peakLeft--;else if(choked){phase='rest';restLeft=Math.max(0,rest-1);denied=true}else phase='release'}
     // the surrogate was trained on skills 0.3–3 (label.js), so the skill it is asked about stays inside that range
     const M=memo(g),beta=Math.min(3,Math.max(.3,tk.beta()*(model.forecastSkill||1))),bf=S.boardFeatures(M,g);
-    let cs=[],keep=-1;
-    if(phase==='rest')for(let i=0;i<C.REST_TRIES&&keep<0;i++){const t=GENS.plain(M,g),f=forecastOne(M,g,t,beta,bf);cs.push({gen:'plain',t,rho:0,f});
+    let cs=[],keep=-1;const stand=C.LATE_VET&&late>0&&choked,clearOf=c=>Math.max(0,...c.t.map(p=>M.bestClear(g,p)));
+    if(stand){cs=candidates(M,g,C.POOL.build,false);forecastAll(M,g,cs,beta,bf);const ok=cs.filter(c=>c.f.X!==0);if(ok.length)cs=ok}
+    else if(phase==='rest')for(let i=0;i<C.REST_TRIES&&keep<0;i++){const t=GENS.plain(M,g),f=forecastOne(M,g,t,beta,bf);cs.push({gen:'plain',t,rho:0,f});
       if(vet&&f.X===0)continue;
       const a=Math.exp(-cost('rest',f,{open})/C.TEMP);if(a>=1||R.random()<a)keep=i}
-    else{cs=candidates(M,g,phase==='release'?C.POOL.release:C.POOL.build,phase==='release');forecastAll(M,g,cs,beta,bf)}
+    else{cs=candidates(M,g,phase==='release'?C.POOL.release:late>0&&C.POOL_END?C.POOL_END:C.POOL.build,phase==='release');forecastAll(M,g,cs,beta,bf)}
     let emergency=false;
-    if(!open&&phase!=='release'&&keep<0&&Math.max(...cs.map(c=>c.f.S))<C.S_FLOOR*(1-end)){if(choked)denied=true;else{
+    if(!stand&&!open&&phase!=='release'&&keep<0&&Math.max(...cs.map(c=>c.f.S))<C.S_FLOOR*(1-end)){if(choked)denied=true;else{
       phase='release';emergency=true;cs=candidates(M,g,C.POOL.release,true);forecastAll(M,g,cs,beta,bf)}}
     // fair: only trays the expert can place in full (or that its search couldn't settle); if no candidate is one, the
     // release pool is drawn as well
@@ -501,7 +510,9 @@ function v2(R,K){
     const fall=fair?k:0,tg={U:phase==='peak'?u-C.PEAK_HOLD:Math.min(uPeak+4,u+C.BUILD_RATE*(1+fall)),C:null,
       S:Math.max(0,C.S_PEAK-(C.S_PEAK-C.S_END)*fall),Sb:Math.max(0,C.S_BUILD-(C.S_BUILD-C.S_END)*fall),earn:C.EARN*(1-end),
       // PEAK_CEIL: the peak's forecast used cells cost above uPeak + PEAK_CEIL, so the peak tray can't choke the board (null: no ceiling)
-      Ucap:phase==='peak'&&C.PEAK_CEIL!=null?uPeak+C.PEAK_CEIL:null};
+      Ucap:phase==='peak'&&C.PEAK_CEIL!=null?uPeak+C.PEAK_CEIL+(C.PEAK_CEIL_END==null?0:late*(C.PEAK_CEIL_END-C.PEAK_CEIL)):null,deny:C.DENY*late};
+    // the most any one piece of the tray could clear on this board
+    if(tg.deny>0&&(phase==='build'||phase==='peak'))for(const c of cs)c.f.D=clearOf(c);
     // RELEASE_AIM: how far from the least to the most a safe candidate clears the release aims before the ending (1: the most).
     // CHOKE_MOB: on a board where fewer shapes fit, the release aims at the least, since a big save there reads as a gift (null: off)
     if(phase==='release'){const safe=cs.filter(c=>c.f.S>=C.S_RELEASE),cl=(safe.length?safe:cs).map(c=>c.f.Cl),lo=Math.min(...cl),
@@ -510,13 +521,15 @@ function v2(R,K){
     const aim={...tg,U:tg.U-(phase==='build'?C.RUST_TRAY:0)};
     // a rest that kept none of its draws takes the safest (on a choked board, the one forecast to clear the least)
     let j=keep;
-    if(phase==='rest'&&j<0)j=choked?cs.reduce((b,c,i)=>c.f.Cl<cs[b].f.Cl?i:b,0):cs.reduce((b,c,i)=>c.f.S>cs[b].f.S?i:b,0);
-    else if(j<0){const logit=cs.map(c=>-cost(phase,c.f,aim)/C.TEMP+C.LAMBDA*c.rho),mx=Math.max(...logit);
+    if(stand){j=0;let bc=Infinity;cs.forEach((c,i)=>{const v=clearOf(c);if(v<bc){bc=v;j=i}})}
+    else if(phase==='rest'&&j<0)j=choked?cs.reduce((b,c,i)=>c.f.Cl<cs[b].f.Cl?i:b,0):cs.reduce((b,c,i)=>c.f.S>cs[b].f.S?i:b,0);
+    else if(j<0){const lam=C.LAMBDA_END==null?C.LAMBDA:C.LAMBDA+Math.min(1,late)*(C.LAMBDA_END-C.LAMBDA),logit=cs.map(c=>-cost(phase,c.f,aim)/C.TEMP+lam*c.rho),mx=Math.max(...logit);
       const w=logit.map(x=>Math.exp(x-mx)),tot=w.reduce((a,b)=>a+b,0);let x=R.random()*tot;for(j=0;j<cs.length-1;j++){x-=w[j];if(x<=0)break}}
     const pick=cs[j],tray=pick.t,hero=tray.find(p=>p.hero);
     // rust: build and peak plan the cells that bring the forecast closest to the next deal's target, leaning to RUST_TRAY
     let n=0;if(phase==='build'||phase==='peak'){let bv=Infinity;const to=phase==='build'?tg.U:Math.max(u,uPeak);
       for(let r=0;r<=C.RUST_MAX_TRAY;r++){const v=((pick.f.U+r-to)/SU)**2+.1*(r-C.RUST_TRAY)**2;if(v<bv){bv=v;n=r}}}
+    if(C.RUST_END!=null)n=Math.max(n,Math.min(C.RUST_END,Math.round(late*C.RUST_END)));
     const pDrift=fair?0:Math.min(K.DRIFT_CAP,K.DRIFT_SLOPE*k);let drifted=0;
     if(pDrift>0)for(const p of tray)if(!p.hero&&R.random()<pDrift){
       let duds=[];for(let c=0;c<R.NC;c++)if(M.bestCatch(g,{cells:p.cells,color:c})<R.BURST_MIN)duds.push(c);
@@ -531,16 +544,18 @@ function v2(R,K){
     return tray;
   }
   return {
-    newRun(){phase='rest';restLeft=0;peakLeft=0;coast=0;last=null;tk=P.tracker(model);bias=0;dealt=null;
+    newRun(){phase='rest';restLeft=0;peakLeft=0;coast=0;last=null;tk=P.tracker(model);bias=0;dealt=null;contShift=undefined;
       const z=OFF_PRIOR.reduce((a,b)=>a+b,0);post=OFF_PRIOR.map(x=>x/z)},
     // every drop updates the player's skill, from the board and tray it was made on
     observe(s,slot,r,c){const set=P.moveSet(R,s.board,s.tray),i=set.moves.findIndex(m=>m[0]===slot&&m[1]===r&&m[2]===c);if(i>=0)tk.observe(set,i)},
     deal,
+    // the player used the paint bomb
+    continued(){if(C.CONT_SHIFT)contShift=(contShift||0)+C.CONT_SHIFT},
     rustAmount(){return dealt.rust},
     info(s){return {rule:dealt.rule,cooldown:restLeft,rescue:dealt.rescue,heroClear:dealt.heroClear,k:levelAt(win,s.placements),trace:dealt.trace}},
     // the whole state as plain JSON, for the app's save and resume and its undo, and for the port's fixtures
-    save:()=>JSON.parse(JSON.stringify({phase,restLeft,peakLeft,coast,last,tk:tk.state(),bias,dealt,win,post})),
-    load(x){x=JSON.parse(JSON.stringify(x));({phase,restLeft,peakLeft,coast,last,bias,dealt,win,post}=x);tk=P.tracker(model,x.tk)},
+    save:()=>JSON.parse(JSON.stringify({phase,restLeft,peakLeft,coast,last,tk:tk.state(),bias,dealt,win,post,contShift})),
+    load(x){x=JSON.parse(JSON.stringify(x));({phase,restLeft,peakLeft,coast,last,bias,dealt,win,post,contShift}=x);tk=P.tracker(model,x.tk)},
   };
 }
 v2.DEFAULTS=DEFAULTS;
